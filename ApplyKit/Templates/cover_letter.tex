@@ -1,0 +1,29 @@
+\documentclass[12pt]{letter}
+
+% Adjust margins
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{setspace}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue
+}
+\usepackage{mathpazo} % Set the font to Palatino
+
+\signature{{{APPLYKIT_NAME}}}
+\address{{{APPLYKIT_COVER_ADDRESS}}}
+
+\begin{document}
+
+\begin{letter}{{{APPLYKIT_RECIPIENT}}}
+
+\opening{{{APPLYKIT_SALUTATION}}}
+
+{{APPLYKIT_BODY}}
+
+\closing{{{APPLYKIT_CLOSING}}}
+
+\end{letter}
+
+\end{document}
