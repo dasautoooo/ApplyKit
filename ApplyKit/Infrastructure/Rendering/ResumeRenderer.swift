@@ -90,9 +90,10 @@ enum ResumeRenderer {
     }
 
     private static func projectTitle(_ project: ExperienceBullet, employment: Employment?) -> String {
+        // resumeDisplayName takes priority — passed through as raw LaTeX, no escaping.
+        if !project.resumeDisplayName.trimmed.isEmpty { return project.resumeDisplayName }
         let name = project.displayTitle == "Untitled Experience" ? (employment?.displayTitle ?? project.displayTitle) : project.displayTitle
         // If the name already contains LaTeX commands, pass it through as-is (raw LaTeX mode).
-        // This lets users embed \ulhref or other commands directly in the project name.
         if name.contains("\\") { return name }
         let link = project.referenceURL.trimmed.isEmpty ? employment?.referenceURL.trimmed : project.referenceURL.trimmed
         if let link, !link.isEmpty { return "\\ulhref{\(link)}{\(escapeLatex(name))}" }

@@ -22,6 +22,8 @@ struct ExperienceBullet: Identifiable, Codable, Hashable {
     var claimLevelRaw: String
     var sensitivityRaw: String
     var referenceURL: String
+    var resumeDisplayName: String
+    var notes: String
     var employmentID: UUID?
     var createdAt: Date
     var updatedAt: Date
@@ -42,6 +44,8 @@ struct ExperienceBullet: Identifiable, Codable, Hashable {
         claimLevel: ClaimLevel = .strong,
         sensitivity: SensitivityLevel = .internalSafe,
         referenceURL: String = "",
+        resumeDisplayName: String = "",
+        notes: String = "",
         employmentID: UUID? = nil
     ) {
         self.id = UUID()
@@ -60,6 +64,8 @@ struct ExperienceBullet: Identifiable, Codable, Hashable {
         self.claimLevelRaw = claimLevel.rawValue
         self.sensitivityRaw = sensitivity.rawValue
         self.referenceURL = referenceURL
+        self.resumeDisplayName = resumeDisplayName
+        self.notes = notes
         self.employmentID = employmentID
         self.createdAt = Date()
         self.updatedAt = Date()

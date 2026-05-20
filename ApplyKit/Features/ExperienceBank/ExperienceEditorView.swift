@@ -42,7 +42,8 @@ struct ExperienceEditorView: View {
          experience.projectName, experience.bulletText, experience.variationsText, experience.skillsText,
          experience.roleCategoryRaw, experience.impactLevelRaw,
          String(experience.usableInResume), String(experience.usableInCoverLetter),
-         experience.referenceURL, experience.employmentID?.uuidString ?? ""].joined(separator: "\u{1F}")
+         experience.referenceURL, experience.resumeDisplayName,
+         experience.employmentID?.uuidString ?? ""].joined(separator: "\u{1F}")
     }
 
     private var assignedEmployment: Employment? {
@@ -149,6 +150,14 @@ struct ExperienceEditorView: View {
                     }
                 }
                 LabeledControl("Reference") { TextField("GitHub, demo, paper, or portfolio URL", text: $experience.referenceURL).textFieldStyle(.roundedBorder) }
+            }
+            LabeledControl("Resume Title Override") {
+                TextField(
+                    "Leave blank to use project name + reference URL",
+                    text: $experience.resumeDisplayName
+                )
+                .textFieldStyle(.roundedBorder)
+                .help("Raw LaTeX passed directly to the resume. Example: \\ulhref{https://github.com/you/proj}{Project Name} (700+ Stars)")
             }
         }
     }

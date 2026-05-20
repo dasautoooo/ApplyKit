@@ -25,7 +25,11 @@ enum PromptBuilder {
         }.joined(separator: "\n")
         let employmentLines = employments.map { "• \($0.companyName) | \($0.role) | \($0.dateRangeText())" }.joined(separator: "\n")
         return """
-        You are a career advisor. Analyze the following job description and provide a structured assessment for the candidate.
+        You are a career advisor helping the candidate build a strong resume and application strategy. Analyze the following job description and provide a structured assessment.
+
+        Important context:
+        - The experience bullets below are from the candidate's experience bank — a catalogue of past work they can draw from when building their resume. They are NOT the candidate's current resume.
+        - Your role is to help the candidate identify which experiences to highlight and how to position them. Do not critique the candidate's experience; focus on how to leverage it.
 
         ## Job
         Company: \(application.companyName)
@@ -39,7 +43,7 @@ enum PromptBuilder {
         Employment history:
         \(employmentLines.isEmpty ? "None provided." : employmentLines)
 
-        Experience bullets:
+        Experience bank (not current resume — these are bullets the candidate can select from):
         \(experienceLines.isEmpty ? "None provided." : experienceLines)
 
         ---
@@ -47,12 +51,24 @@ enum PromptBuilder {
         Provide your analysis with ALL of the following sections using markdown (## headers). Be specific, concise, and actionable.
 
         ## Role Overview
+
         ## Required Skills & Qualifications
+
         ## Nice-to-Have Skills
+
         ## Candidate Fit Assessment
-        ## Skill Gaps & How to Address Them
+        Rate the candidate's fit on a scale of 0–10 (increments of 0.5, e.g. 7.5/10). Start the section with the score prominently (e.g. "**8.5/10**"), then explain the rating based on how well the experience bank matches the role's requirements. Focus on strengths and opportunities, not shortcomings.
+
+        ## Skill Gaps
+        Identify skills or qualifications required by the role that are not covered by the experience bank. Be honest and specific, but frame each gap as something to work toward or address in the application strategy, not as a disqualifier.
+
+        ## Resume-Building Recommendations
+        Based on the experience bank, recommend which bullets to highlight and how to frame them for this role. Suggest how to reframe or strengthen existing bullets to better match the job requirements.
+
         ## Preparation Recommendations
+
         ## Application Strategy
+
         ## Key Questions to Ask
         """
     }
@@ -159,6 +175,81 @@ enum PromptBuilder {
         ## Selected Experience Source Of Truth
         \(experienceBlock)
         """
+    }
+
+    static func bulletCurationPrompt(application: JobApplication, allExperiences: [ExperienceBullet], employments: [Employment]) -> String {
+        let experienceLines = allExperiences.map { exp in
+            "ID: \(exp.id.uuidString)\n  • \(exp.displayTitle) @ \(exp.company.isEmpty ? "Personal" : exp.company)\(exp.role.isEmpty ? "" : " / \(exp.role)") — \(exp.bulletText.prefix(200)) [Skills: \(exp.skillsText)]"
+        }.joined(separator: "\n")
+        let employmentLines = employments.map { "• \($0.companyName) | \($0.role) | \($0.dateRangeText())" }.joined(separator: "\n")
+        return """
+        You are a career advisor helping a candidate build a strong resume for a specific role.
+
+        Context:
+        - The experience bullets below are from the candidate's experience bank — a catalogue of past work. They are NOT the current resume.
+        - Produce two types of suggestions:
+          1. REWRITES: Take an existing bullet and reframe it to better match this role — same underlying story, but different angle, emphasis, tech stack, or scope. These should feel like a natural evolution of what already exists.
+          2. NEW BULLETS: Entirely new experience bullets the candidate could develop, grounded in existing skills as a bridge. Do not suggest unrelated skills.
+        - For rewrites, set "source_bullet_id" to the exact UUID of the bullet being rewritten.
+        - For new bullets, omit "source_bullet_id" (or set it to null).
+        - Do not invent metrics. Write bullets that are ready to be filled in once the candidate gains or frames the experience.
+
+        ## Job
+        Company: \(application.companyName)
+        Title: \(application.jobTitle)
+        Location: \(application.location)
+
+        ## Job Description
+        \(application.jobDescription)
+
+        ## Employment History
+        \(employmentLines.isEmpty ? "None provided." : employmentLines)
+
+        ## Experience Bank (with IDs)
+        \(experienceLines.isEmpty ? "None provided." : experienceLines)
+
+        ---
+
+        Generate 5–9 total suggestions (mix of rewrites and new bullets). For each:
+        - bullet: A strong, resume-ready bullet point. Start with an action verb.
+        - relevance: For rewrites — what changed and why this framing fits the role better. For new bullets — which existing experience this extends from.
+        - how_to_learn: Concrete, actionable steps (courses, projects, practice) to genuinely own this.
+        - story: A short narrative (2–4 sentences) the candidate can tell in interviews to authentically claim this experience.
+        - source_bullet_id: The UUID string of the bullet being rewritten, or null for new bullets.
+
+        Return ONLY a valid JSON array, no other text:
+        [
+          {
+            "bullet": "...",
+            "relevance": "...",
+            "how_to_learn": "...",
+            "story": "...",
+            "source_bullet_id": "<UUID or null>"
+          }
+        ]
+        """
+    }
+
+    static func parseCuratedSuggestions(from response: String, allExperiences: [ExperienceBullet]) -> [CuratedBulletSuggestion] {
+        guard let startIdx = response.firstIndex(of: "["),
+              let endIdx = response.lastIndex(of: "]") else { return [] }
+        let jsonString = String(response[startIdx...endIdx])
+        guard let data = jsonString.data(using: .utf8),
+              let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+        let experienceIndex = Dictionary(uniqueKeysWithValues: allExperiences.map { ($0.id, $0) })
+        return array.compactMap { dict in
+            guard let bullet = dict["bullet"] as? String, !bullet.trimmed.isEmpty else { return nil }
+            let sourceID: UUID? = (dict["source_bullet_id"] as? String).flatMap { UUID(uuidString: $0) }
+            let sourceTitle = sourceID.flatMap { experienceIndex[$0]?.displayTitle }
+            return CuratedBulletSuggestion(
+                bulletText: bullet,
+                relevance: dict["relevance"] as? String ?? "",
+                howToLearn: dict["how_to_learn"] as? String ?? "",
+                story: dict["story"] as? String ?? "",
+                sourceBulletID: sourceID,
+                sourceBulletTitle: sourceTitle
+            )
+        }
     }
 
     static func parseRecommendedIDs(from response: String, validIDs: Set<UUID>) -> [UUID] {

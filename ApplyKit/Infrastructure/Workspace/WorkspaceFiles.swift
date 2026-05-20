@@ -12,6 +12,7 @@ enum WorkspaceFiles {
     static let jobDescriptionFile = "job-description.md"
     static let notesFile = "notes.md"
     static let jdAnalysisFile = "jd-analysis.md"
+    static let curatedSuggestionsFile = "curated-suggestions.json"
     static let manifestYAML = "manifest.yml"
     static let resumeDirectory = "resume"
     static let coverLetterDirectory = "cover-letter"
@@ -128,6 +129,7 @@ enum WorkspaceFiles {
         if let ap = dto.paths.jdAnalysis {
             app.jdAnalysisText = (try? String(contentsOf: resolve(ap, relativeTo: appFolder), encoding: .utf8)) ?? ""
         }
+        app.curatedSuggestionsData = (try? String(contentsOf: appFolder.appendingPathComponent(curatedSuggestionsFile), encoding: .utf8)) ?? ""
         return app
     }
 
@@ -150,7 +152,10 @@ enum WorkspaceFiles {
             bulletText: experience.bulletText, variations: experience.variations.map { variationDTO(from: $0) },
             skills: experience.parsedSkills, roleCategory: experience.roleCategoryRaw, impactLevel: experience.impactLevelRaw,
             usableInResume: experience.usableInResume, usableInCoverLetter: experience.usableInCoverLetter,
-            referenceURL: experience.referenceURL, employmentID: experience.employmentID?.uuidString,
+            referenceURL: experience.referenceURL,
+            resumeDisplayName: experience.resumeDisplayName.isEmpty ? nil : experience.resumeDisplayName,
+            notes: experience.notes.isEmpty ? nil : experience.notes,
+            employmentID: experience.employmentID?.uuidString,
             createdAt: WorkspaceDateCodec.string(from: experience.createdAt), updatedAt: WorkspaceDateCodec.string(from: experience.updatedAt))
     }
 
@@ -164,6 +169,8 @@ enum WorkspaceFiles {
             usableInResume: dto.usableInResume, usableInCoverLetter: dto.usableInCoverLetter,
             referenceURL: dto.referenceURL, employmentID: dto.employmentID.flatMap { UUID(uuidString: $0) })
         if let id = UUID(uuidString: dto.id) { exp.id = id }
+        exp.resumeDisplayName = dto.resumeDisplayName ?? ""
+        exp.notes = dto.notes ?? ""
         exp.createdAt = WorkspaceDateCodec.date(from: dto.createdAt) ?? Date()
         exp.updatedAt = WorkspaceDateCodec.date(from: dto.updatedAt) ?? Date()
         return exp
@@ -287,10 +294,19 @@ enum WorkspaceFiles {
 
     // MARK: - File URL computation
     static func fileURLForApplication(_ application: JobApplication, in root: URL) throws -> URL {
-        if let existing = try findApplicationFolder(id: application.id, in: root) { return existing }
         let raw = [application.companyName, application.jobTitle].map(\.trimmed).filter { !$0.isEmpty }.joined(separator: "_")
         let folderName = slug(from: raw, fallback: application.id.uuidString.lowercased())
-        return root.appendingPathComponent(applicationsDirectory, isDirectory: true).appendingPathComponent(folderName, isDirectory: true)
+        let desired = root.appendingPathComponent(applicationsDirectory, isDirectory: true).appendingPathComponent(folderName, isDirectory: true)
+        if let existing = try findApplicationFolder(id: application.id, in: root) {
+            if existing.standardizedFileURL.path != desired.standardizedFileURL.path,
+               FileManager.default.fileExists(atPath: existing.path),
+               !FileManager.default.fileExists(atPath: desired.path) {
+                try FileManager.default.moveItem(at: existing, to: desired)
+                return desired
+            }
+            return existing
+        }
+        return desired
     }
 
     static func findApplicationFolder(id: UUID, in root: URL) throws -> URL? {

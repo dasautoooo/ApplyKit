@@ -65,6 +65,160 @@ extension ApplicationEditorView {
         }
     }
 
+    var curatedBulletsSection: some View {
+        DetailPanel("Experience Gap Suggestions") {
+            Button {
+                Task { await curateBullets() }
+            } label: {
+                Label(
+                    isCuratingBullets ? "Generating…" : (curatedSuggestions.isEmpty ? "Suggest Bullets" : "Re-generate"),
+                    systemImage: "sparkles"
+                )
+            }
+            .disabled(activityMonitor.state == .running || application.jobDescription.trimmed.isEmpty || aiBackendPath == nil)
+            .help(aiBackendPath == nil
+                ? "Configure an AI CLI in Settings → Tools"
+                : application.jobDescription.trimmed.isEmpty
+                    ? "Paste a job description first"
+                    : "Suggest new experience bullets based on your experience bank")
+        } content: {
+            if !curatedSuggestions.isEmpty {
+                VStack(spacing: 10) {
+                    let bulletIDs = Set(experiences.map(\.id))
+                    let variantIDsByBullet = Dictionary(uniqueKeysWithValues: experiences.map {
+                        ($0.id, Set($0.variations.map(\.id)))
+                    })
+                    ForEach($curatedSuggestions) { $suggestion in
+                        CuratedBulletCard(
+                            suggestion: $suggestion,
+                            selectedExperienceIDs: application.selectedExperienceIDs,
+                            activeVariants: application.selectedVariantIDs,
+                            existingBulletIDs: bulletIDs,
+                            existingVariantIDsByBullet: variantIDsByBullet,
+                            onAddToResume: { addCuratedToResume(id: suggestion.id) },
+                            onBankOnly: { addCuratedToBank(id: suggestion.id) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    func curateBullets() async {
+        guard aiBackendPath != nil else { return }
+        await MainActor.run {
+            isCuratingBullets = true
+            activityMonitor.start("Generating experience gap suggestions…")
+        }
+        do {
+            let prompt = PromptBuilder.bulletCurationPrompt(
+                application: application,
+                allExperiences: experiences,
+                employments: employments
+            )
+            let response = try await runAI(prompt: prompt)
+            let suggestions = PromptBuilder.parseCuratedSuggestions(from: response, allExperiences: experiences)
+            await MainActor.run {
+                curatedSuggestions = suggestions
+                application.curatedSuggestionsData = encodeCuratedSuggestions(suggestions)
+                persistApplicationChanges()
+                isCuratingBullets = false
+                if suggestions.isEmpty {
+                    activityMonitor.fail("Couldn't parse suggestions. Try adding a job description first.")
+                } else {
+                    activityMonitor.succeed("Generated \(suggestions.count) bullet suggestion\(suggestions.count == 1 ? "" : "s").")
+                }
+            }
+        } catch {
+            await MainActor.run {
+                isCuratingBullets = false
+                activityMonitor.fail(error.localizedDescription)
+            }
+        }
+    }
+
+    func addCuratedToResume(id: UUID) {
+        guard let settings,
+              let idx = curatedSuggestions.firstIndex(where: { $0.id == id }) else { return }
+        let suggestion = curatedSuggestions[idx]
+        commitToBank(suggestion: suggestion, settings: settings)
+        if let sourceID = suggestion.sourceBulletID,
+           let expIdx = store.experiences.firstIndex(where: { $0.id == sourceID }),
+           let variant = store.experiences[expIdx].variations.last {
+            application.setExperience(sourceID, selected: true)
+            application.setVariant(variant.id, for: sourceID)
+            curatedSuggestions[idx].addedBulletID = sourceID
+            curatedSuggestions[idx].addedVariantID = variant.id
+        } else if let newBullet = store.experiences.first(where: { $0.bulletText == suggestion.bulletText }) {
+            application.setExperience(newBullet.id, selected: true)
+            curatedSuggestions[idx].addedBulletID = newBullet.id
+        }
+        application.curatedSuggestionsData = encodeCuratedSuggestions(curatedSuggestions)
+        persistApplicationChanges()
+        activityMonitor.succeed(suggestion.isVariation ? "Wording added and selected for this application." : "Bullet added to resume.")
+    }
+
+    func addCuratedToBank(id: UUID) {
+        guard let settings,
+              let idx = curatedSuggestions.firstIndex(where: { $0.id == id }) else { return }
+        let suggestion = curatedSuggestions[idx]
+        commitToBank(suggestion: suggestion, settings: settings)
+        curatedSuggestions[idx].addedState = .bankOnly
+        // Store the bullet ID so we know it's been added even without selecting for resume
+        if let sourceID = suggestion.sourceBulletID {
+            curatedSuggestions[idx].addedBulletID = sourceID
+            if let expIdx = store.experiences.firstIndex(where: { $0.id == sourceID }),
+               let variant = store.experiences[expIdx].variations.last {
+                curatedSuggestions[idx].addedVariantID = variant.id
+            }
+        } else if let newBullet = store.experiences.first(where: { $0.bulletText == suggestion.bulletText }) {
+            curatedSuggestions[idx].addedBulletID = newBullet.id
+        }
+        application.curatedSuggestionsData = encodeCuratedSuggestions(curatedSuggestions)
+        persistApplicationChanges()
+        activityMonitor.succeed(suggestion.isVariation ? "New wording saved to experience bank." : "Bullet saved to experience bank.")
+    }
+
+    private func commitToBank(suggestion: CuratedBulletSuggestion, settings: AppSettings) {
+        if let sourceID = suggestion.sourceBulletID,
+           let idx = store.experiences.firstIndex(where: { $0.id == sourceID }) {
+            var existing = store.experiences[idx]
+            let variant = ExperienceVariation(
+                name: ExperienceVariation.defaultName(existing: existing.variations),
+                bulletText: suggestion.bulletText,
+                notes: curatedNotes(for: suggestion)
+            )
+            existing.variations.append(variant)
+            store.experiences[idx] = existing
+            try? WorkspaceSyncService.persistExperience(existing, allExperiences: store.experiences, settings: settings)
+        } else {
+            let bullet = ExperienceBullet(bulletText: suggestion.bulletText, notes: curatedNotes(for: suggestion))
+            store.experiences.insert(bullet, at: 0)
+            try? WorkspaceSyncService.persistExperience(bullet, allExperiences: store.experiences, settings: settings)
+        }
+    }
+
+    func encodeCuratedSuggestions(_ suggestions: [CuratedBulletSuggestion]) -> String {
+        guard let data = try? JSONEncoder().encode(suggestions),
+              let json = String(data: data, encoding: .utf8) else { return "" }
+        return json
+    }
+
+    func decodeCuratedSuggestions(_ json: String) -> [CuratedBulletSuggestion] {
+        guard !json.isEmpty,
+              let data = json.data(using: .utf8),
+              let suggestions = try? JSONDecoder().decode([CuratedBulletSuggestion].self, from: data) else { return [] }
+        return suggestions
+    }
+
+    private func curatedNotes(for suggestion: CuratedBulletSuggestion) -> String {
+        var parts: [String] = []
+        if !suggestion.relevance.trimmed.isEmpty { parts.append("## Relevance\n\(suggestion.relevance)") }
+        if !suggestion.howToLearn.trimmed.isEmpty { parts.append("## How to Learn\n\(suggestion.howToLearn)") }
+        if !suggestion.story.trimmed.isEmpty { parts.append("## Your Story\n\(suggestion.story)") }
+        return parts.joined(separator: "\n\n")
+    }
+
     var notesSection: some View {
         DetailPanel("Notes") {
             TextEditor(text: $application.notes)

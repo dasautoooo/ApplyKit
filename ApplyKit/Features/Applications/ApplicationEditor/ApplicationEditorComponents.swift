@@ -421,6 +421,200 @@ struct DocumentRow: View {
     }
 }
 
+struct CuratedBulletCard: View {
+    @Binding var suggestion: CuratedBulletSuggestion
+    let selectedExperienceIDs: Set<UUID>
+    let activeVariants: [UUID: UUID]
+    let existingBulletIDs: Set<UUID>
+    let existingVariantIDsByBullet: [UUID: Set<UUID>]
+    let onAddToResume: () -> Void
+    let onBankOnly: () -> Void
+    @State private var showRelevance = false
+    @State private var showHowToLearn = false
+    @State private var showStory = false
+
+    /// True when the bullet/variant actually still exists in the experience bank.
+    var isStillInBank: Bool {
+        guard let bulletID = suggestion.addedBulletID else { return false }
+        guard existingBulletIDs.contains(bulletID) else { return false }
+        if let variantID = suggestion.addedVariantID {
+            return existingVariantIDsByBullet[bulletID]?.contains(variantID) ?? false
+        }
+        return true
+    }
+
+    /// True when the added bullet/variant is currently selected for this application's resume.
+    var isInResume: Bool {
+        guard isStillInBank else { return false }
+        guard let bulletID = suggestion.addedBulletID else { return false }
+        guard selectedExperienceIDs.contains(bulletID) else { return false }
+        if let variantID = suggestion.addedVariantID {
+            return activeVariants[bulletID] == variantID
+        }
+        return true
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header: type badge + status + bullet editor
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    // Type badge — both use blue to match the wording section's "Variant" badge
+                    if suggestion.isVariation {
+                        Text("Variation")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.blue)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.blue.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                        if let title = suggestion.sourceBulletTitle {
+                            Text("of \"\(title)\"")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    } else {
+                        Text("New Bullet")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.teal)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.teal.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
+                    Spacer()
+                    // Status badge — derived from live selection, not stored state
+                    if isInResume {
+                        Label("In Resume", systemImage: "checkmark.circle.fill")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.green)
+                    } else if isStillInBank {
+                        Label("In Bank", systemImage: "tray.fill")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                TextEditor(text: $suggestion.bulletText)
+                    .font(.body)
+                    .frame(minHeight: 52)
+                    .scrollContentBackground(.hidden)
+                    .background(Color.clear)
+            }
+            .padding(12)
+
+            Divider()
+
+            // Disclosure rows
+            VStack(alignment: .leading, spacing: 0) {
+                CuratedBulletDisclosureRow(label: "Relevance", isExpanded: $showRelevance) {
+                    Text(suggestion.relevance)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                Divider()
+                CuratedBulletDisclosureRow(label: "How to Learn", isExpanded: $showHowToLearn) {
+                    Text(suggestion.howToLearn)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                Divider()
+                CuratedBulletDisclosureRow(label: "Your Story", isExpanded: $showStory) {
+                    Text(suggestion.story)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+
+            Divider()
+
+            // Action buttons — style reflects current state
+            HStack(spacing: 8) {
+                if isInResume {
+                    Button(action: onAddToResume) {
+                        Label("Re-add to Resume", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                } else {
+                    Button(action: onAddToResume) {
+                        Label(
+                            suggestion.isVariation ? "Add Wording to Resume" : "Add to Resume",
+                            systemImage: "doc.badge.plus"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
+                if !isInResume {
+                    Button(action: onBankOnly) {
+                        Text(suggestion.addedState == .bankOnly ? "Re-save to Bank" : "Bank only")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(
+                    isInResume
+                        ? Color.green.opacity(0.4)
+                        : Color(nsColor: .separatorColor).opacity(0.4),
+                    lineWidth: 1
+                )
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .animation(.easeInOut(duration: 0.12), value: isInResume)
+        .animation(.easeInOut(duration: 0.12), value: isStillInBank)
+    }
+}
+
+private struct CuratedBulletDisclosureRow<Content: View>: View {
+    let label: String
+    @Binding var isExpanded: Bool
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 12)
+                    Text(label)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                content
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+            }
+        }
+    }
+}
+
 struct JDAnalysisView: View {
     let text: String
 
@@ -453,6 +647,30 @@ struct JDAnalysisView: View {
                                 inlineText(s)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
+                        case .table(let rows):
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(Array(rows.enumerated()), id: \.offset) { rowIdx, row in
+                                    HStack(alignment: .top, spacing: 0) {
+                                        ForEach(Array(row.enumerated()), id: \.offset) { colIdx, cell in
+                                            inlineText(cell)
+                                                .font(rowIdx == 0 ? .body.weight(.semibold) : .body)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                                .padding(.vertical, 6)
+                                                .padding(.horizontal, 10)
+                                            if colIdx < row.count - 1 { Divider() }
+                                        }
+                                    }
+                                    .background(rowIdx == 0 ? Color(nsColor: .controlBackgroundColor) : Color.clear)
+                                    Divider()
+                                }
+                            }
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+                            }
+                            .frame(maxWidth: .infinity)
                         }
                     }
                 }
@@ -480,6 +698,7 @@ struct JDAnalysisView: View {
         case paragraph(String)
         case bullet(String)
         case subheader(String)
+        case table([[String]])
     }
 
     private struct Section {
@@ -491,10 +710,14 @@ struct JDAnalysisView: View {
         var sections: [Section] = []
         var current = Section(title: "", blocks: [])
         var pendingLines: [String] = []
+        var tableRows: [[String]] = []
 
         func flushPending(_ lines: [String], into section: inout Section) {
             let joined = lines.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
             if !joined.isEmpty { section.blocks.append(.paragraph(joined)) }
+        }
+        func flushTable(_ rows: [[String]], into section: inout Section) {
+            if !rows.isEmpty { section.blocks.append(.table(rows)) }
         }
 
         for rawLine in text.components(separatedBy: "\n") {
@@ -502,35 +725,48 @@ struct JDAnalysisView: View {
 
             if line.hasPrefix("## ") {
                 flushPending(pendingLines, into: &current)
-                pendingLines = []
-                if !current.title.isEmpty || !current.blocks.isEmpty {
-                    sections.append(current)
-                }
+                flushTable(tableRows, into: &current)
+                pendingLines = []; tableRows = []
+                if !current.title.isEmpty || !current.blocks.isEmpty { sections.append(current) }
                 current = Section(title: String(line.dropFirst(3)), blocks: [])
             } else if line.hasPrefix("###") {
                 flushPending(pendingLines, into: &current)
-                pendingLines = []
+                flushTable(tableRows, into: &current)
+                pendingLines = []; tableRows = []
                 let heading = line.drop(while: { $0 == "#" }).trimmingCharacters(in: .whitespaces)
                 if !heading.isEmpty { current.blocks.append(.subheader(heading)) }
             } else if line == "---" || line == "***" || line == "___" {
                 flushPending(pendingLines, into: &current)
-                pendingLines = []
+                flushTable(tableRows, into: &current)
+                pendingLines = []; tableRows = []
             } else if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("• ") {
                 flushPending(pendingLines, into: &current)
-                pendingLines = []
+                flushTable(tableRows, into: &current)
+                pendingLines = []; tableRows = []
                 let content = String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces)
                 current.blocks.append(.bullet(content))
-            } else if line.isEmpty {
+            } else if line.hasPrefix("|") {
                 flushPending(pendingLines, into: &current)
                 pendingLines = []
+                let cells = line.components(separatedBy: "|").dropFirst().dropLast()
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                let isSeparator = !cells.isEmpty && cells.filter { !$0.isEmpty }.allSatisfy { cell in
+                    cell.allSatisfy { $0 == "-" || $0 == ":" }
+                }
+                if !isSeparator { tableRows.append(Array(cells)) }
+            } else if line.isEmpty {
+                flushPending(pendingLines, into: &current)
+                flushTable(tableRows, into: &current)
+                pendingLines = []; tableRows = []
             } else {
+                flushTable(tableRows, into: &current)
+                tableRows = []
                 pendingLines.append(line)
             }
         }
         flushPending(pendingLines, into: &current)
-        if !current.title.isEmpty || !current.blocks.isEmpty {
-            sections.append(current)
-        }
+        flushTable(tableRows, into: &current)
+        if !current.title.isEmpty || !current.blocks.isEmpty { sections.append(current) }
         return sections
     }
 }

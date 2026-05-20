@@ -72,12 +72,13 @@ struct ExperienceFileDTO: Codable {
     var id: String; var experienceType: String; var company: String; var role: String; var projectName: String
     var bulletText: String; var variations: [ExperienceVariationDTO]; var skills: [String]
     var roleCategory: String; var impactLevel: String; var usableInResume: Bool; var usableInCoverLetter: Bool
-    var referenceURL: String; var employmentID: String?; var createdAt: String?; var updatedAt: String?
+    var referenceURL: String; var resumeDisplayName: String?; var notes: String?; var employmentID: String?; var createdAt: String?; var updatedAt: String?
     enum CodingKeys: String, CodingKey {
         case id; case experienceType = "experience_type"; case company; case role; case projectName = "project_name"
         case bulletText = "bullet_text"; case variations; case skills; case roleCategory = "role_category"
         case impactLevel = "impact_level"; case usableInResume = "usable_in_resume"
         case usableInCoverLetter = "usable_in_cover_letter"; case referenceURL = "reference_url"
+        case resumeDisplayName = "resume_display_name"; case notes
         case employmentID = "employment_id"; case createdAt = "created_at"; case updatedAt = "updated_at"
     }
 }

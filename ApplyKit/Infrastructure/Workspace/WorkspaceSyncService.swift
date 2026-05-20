@@ -72,6 +72,9 @@ enum WorkspaceSyncService {
         try application.jobDescription.write(to: appFolder.appendingPathComponent(WorkspaceFiles.jobDescriptionFile), atomically: true, encoding: .utf8)
         try application.notes.write(to: appFolder.appendingPathComponent(WorkspaceFiles.notesFile), atomically: true, encoding: .utf8)
         try application.jdAnalysisText.write(to: appFolder.appendingPathComponent(WorkspaceFiles.jdAnalysisFile), atomically: true, encoding: .utf8)
+        if !application.curatedSuggestionsData.isEmpty {
+            try application.curatedSuggestionsData.write(to: appFolder.appendingPathComponent(WorkspaceFiles.curatedSuggestionsFile), atomically: true, encoding: .utf8)
+        }
         try YAMLFileStore.write(WorkspaceFiles.applicationDTO(from: application, documents: documents, appFolder: appFolder), to: appFolder.appendingPathComponent(WorkspaceFiles.applicationFile))
         try YAMLFileStore.write(WorkspaceFiles.manifestDTO(), to: root.appendingPathComponent(WorkspaceFiles.manifestFile))
     }

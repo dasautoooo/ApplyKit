@@ -214,6 +214,8 @@ struct SettingsView: View {
     private var settingsPersistenceFingerprint: String {
         [
             settings.codexCLIPath,
+            settings.claudeCLIPath,
+            settings.preferredAIBackendRaw,
             settings.latexBuildCommand,
             settings.externalEditorPath,
             settings.resumeTemplatePath,
