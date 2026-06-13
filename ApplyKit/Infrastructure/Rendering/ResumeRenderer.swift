@@ -8,9 +8,10 @@ enum ResumeRenderer {
 
     static func render(template: String, variantSelections: [UUID: UUID],
                        selectedExperiences: [ExperienceBullet], selectedProjects: [ExperienceBullet],
-                       employments: [Employment]) -> RenderResult {
+                       employments: [Employment], roleDescriptionOverrides: [UUID: String] = [:]) -> RenderResult {
         let experience = experienceBlock(selectedExperiences: selectedExperiences,
-                                         variantSelections: variantSelections, employments: employments)
+                                         variantSelections: variantSelections, employments: employments,
+                                         roleDescriptionOverrides: roleDescriptionOverrides)
         let projects = projectBlock(selectedProjects: selectedProjects,
                                      variantSelections: variantSelections, employments: employments)
         let rendered = template
@@ -20,7 +21,8 @@ enum ResumeRenderer {
     }
 
     static func experienceBlock(selectedExperiences: [ExperienceBullet], variantSelections: [UUID: UUID],
-                                 employments: [Employment]) -> (block: String, warnings: [String]) {
+                                 employments: [Employment],
+                                 roleDescriptionOverrides: [UUID: String] = [:]) -> (block: String, warnings: [String]) {
         guard !selectedExperiences.isEmpty else { return ("% No experience bullets selected.", []) }
         let employmentsByID = Dictionary(uniqueKeysWithValues: employments.map { ($0.id, $0) })
         var grouped: [UUID: [ExperienceBullet]] = [:]
@@ -41,7 +43,8 @@ enum ResumeRenderer {
         var rendered: [String] = []
         for (index, group) in groups.enumerated() {
             if index > 0 { rendered.append("\n\(separator)\n") }
-            rendered.append(renderSubsection(employment: group.0, bullets: group.1, variantSelections: variantSelections))
+            rendered.append(renderSubsection(employment: group.0, bullets: group.1, variantSelections: variantSelections,
+                                             roleDescriptionOverride: roleDescriptionOverrides[group.0.id]))
         }
         var warnings: [String] = []
         if orphanCount > 0 { warnings.append("\(orphanCount) selected experience(s) skipped because they have no employment record.") }
@@ -65,9 +68,12 @@ enum ResumeRenderer {
         return (rendered.joined(separator: "\n\n"), [])
     }
 
-    private static func renderSubsection(employment: Employment, bullets: [ExperienceBullet], variantSelections: [UUID: UUID]) -> String {
+    private static func renderSubsection(employment: Employment, bullets: [ExperienceBullet], variantSelections: [UUID: UUID],
+                                         roleDescriptionOverride: String? = nil) -> String {
         var allItems: [String] = []
-        if !employment.roleDescription.trimmed.isEmpty { allItems.append("    \\item \(employment.roleDescription)") }
+        let override = roleDescriptionOverride?.trimmed
+        let roleDescription = (override?.isEmpty == false) ? override! : employment.roleDescription
+        if !roleDescription.trimmed.isEmpty { allItems.append("    \\item \(roleDescription)") }
         allItems += bullets.map { "    \\item \($0.bulletText(variantID: variantSelections[$0.id]))" }
         return """
         \\begin{rSubsection}{\(escapeLatex(employment.companyName))}{\(escapeLatex(employment.dateRangeText()))}{\(escapeLatex(employment.role))}{\(escapeLatex(employment.location))}

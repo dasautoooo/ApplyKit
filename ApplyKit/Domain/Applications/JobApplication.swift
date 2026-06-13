@@ -25,6 +25,7 @@ struct JobApplication: Identifiable, Codable, Hashable {
     var selectedExperienceIDsText: String
     var selectedProjectIDsText: String
     var selectedVariantIDsText: String
+    var employmentRoleDescriptionsText: String
     var archivedAt: Date?
     var createdAt: Date
     var updatedAt: Date
@@ -57,6 +58,7 @@ struct JobApplication: Identifiable, Codable, Hashable {
         self.selectedExperienceIDsText = ""
         self.selectedProjectIDsText = ""
         self.selectedVariantIDsText = ""
+        self.employmentRoleDescriptionsText = ""
         self.archivedAt = nil
         self.createdAt = Date()
         self.updatedAt = Date()
@@ -131,6 +133,46 @@ extension JobApplication {
         return Dictionary(uniqueKeysWithValues: raw.compactMap { key, value in
             guard let eID = UUID(uuidString: key), let vID = UUID(uuidString: value) else { return nil }
             return (eID, vID)
+        })
+    }
+
+    var employmentRoleDescriptions: [UUID: String] {
+        JobApplication.decodeRoleDescriptions(employmentRoleDescriptionsText)
+    }
+
+    /// Per-application role-description override for an employment, or nil when blank
+    /// (callers fall back to the employment's default `roleDescription`).
+    func roleDescription(for employmentID: UUID) -> String? {
+        let text = employmentRoleDescriptions[employmentID]?.trimmed ?? ""
+        return text.isEmpty ? nil : text
+    }
+
+    mutating func setRoleDescription(_ text: String, for employmentID: UUID) {
+        var overrides = employmentRoleDescriptions
+        if text.trimmed.isEmpty {
+            overrides.removeValue(forKey: employmentID)
+        } else {
+            overrides[employmentID] = text
+        }
+        employmentRoleDescriptionsText = JobApplication.encodeRoleDescriptions(overrides)
+        updatedAt = Date()
+    }
+
+    static func encodeRoleDescriptions(_ overrides: [UUID: String]) -> String {
+        guard !overrides.isEmpty,
+              let data = try? JSONEncoder().encode(
+                Dictionary(uniqueKeysWithValues: overrides.map { ($0.key.uuidString, $0.value) })
+              ),
+              let text = String(data: data, encoding: .utf8) else { return "" }
+        return text
+    }
+
+    static func decodeRoleDescriptions(_ text: String) -> [UUID: String] {
+        guard let data = text.data(using: .utf8),
+              let raw = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
+        return Dictionary(uniqueKeysWithValues: raw.compactMap { key, value in
+            guard let eID = UUID(uuidString: key) else { return nil }
+            return (eID, value)
         })
     }
 }

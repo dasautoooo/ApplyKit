@@ -102,6 +102,7 @@ enum WorkspaceFiles {
             selectedExperienceIDs: application.selectedExperienceIDs.map(\.uuidString).sorted(),
             selectedProjectIDs: application.selectedProjectIDs.map(\.uuidString).sorted(),
             selectedVariantIDs: variantSelectionDTO(from: application),
+            selectedRoleDescriptions: roleDescriptionDTO(from: application),
             archivedAt: WorkspaceDateCodec.string(from: application.archivedAt),
             createdAt: WorkspaceDateCodec.string(from: application.createdAt), updatedAt: WorkspaceDateCodec.string(from: application.updatedAt),
             paths: ApplicationPathsDTO(jobDescription: jobDescriptionFile, notes: notesFile, jdAnalysis: jdAnalysisFile),
@@ -121,6 +122,7 @@ enum WorkspaceFiles {
         app.selectedExperienceIDsText = dto.selectedExperienceIDs.sorted().joined(separator: ",")
         app.selectedProjectIDsText = (dto.selectedProjectIDs ?? []).sorted().joined(separator: ",")
         app.selectedVariantIDsText = JobApplication.encodeVariantSelections(variantSelections(from: dto.selectedVariantIDs))
+        app.employmentRoleDescriptionsText = JobApplication.encodeRoleDescriptions(roleDescriptions(from: dto.selectedRoleDescriptions))
         app.archivedAt = WorkspaceDateCodec.date(from: dto.archivedAt)
         app.createdAt = WorkspaceDateCodec.date(from: dto.createdAt) ?? Date()
         app.updatedAt = WorkspaceDateCodec.date(from: dto.updatedAt) ?? Date()
@@ -142,6 +144,18 @@ enum WorkspaceFiles {
         return Dictionary(uniqueKeysWithValues: dto.compactMap { key, value in
             guard let eID = UUID(uuidString: key), let vID = UUID(uuidString: value) else { return nil }
             return (eID, vID)
+        })
+    }
+
+    static func roleDescriptionDTO(from application: JobApplication) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: application.employmentRoleDescriptions.map { ($0.key.uuidString, $0.value) })
+    }
+
+    static func roleDescriptions(from dto: [String: String]?) -> [UUID: String] {
+        guard let dto else { return [:] }
+        return Dictionary(uniqueKeysWithValues: dto.compactMap { key, value in
+            guard let eID = UUID(uuidString: key) else { return nil }
+            return (eID, value)
         })
     }
 

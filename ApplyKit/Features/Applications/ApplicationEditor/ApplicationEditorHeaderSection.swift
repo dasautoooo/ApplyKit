@@ -207,7 +207,14 @@ extension ApplicationEditorView {
                 let range = emp.dateRangeText()
                 if !range.isEmpty { line += " (\(range))" }
                 if !emp.location.trimmed.isEmpty { line += " — \(emp.location)" }
-                if !emp.roleDescription.trimmed.isEmpty { line += "\n  \(emp.roleDescription)" }
+                if let override = application.roleDescription(for: emp.id) {
+                    if !emp.roleDescription.trimmed.isEmpty {
+                        line += "\n  Role description (default): \(emp.roleDescription)"
+                    }
+                    line += "\n  Role description (override for this application): \(override)"
+                } else if !emp.roleDescription.trimmed.isEmpty {
+                    line += "\n  Role description: \(emp.roleDescription)"
+                }
                 return line
             }.joined(separator: "\n")
             return "## Employment History\n\(lines)"

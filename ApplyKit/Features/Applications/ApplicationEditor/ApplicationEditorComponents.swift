@@ -276,6 +276,75 @@ struct ApplicationExperienceWordingRow: View {
     }
 }
 
+struct ApplicationRoleDescriptionRow: View {
+    @Binding var application: JobApplication
+    let employment: Employment
+
+    private var hasOverride: Bool {
+        application.roleDescription(for: employment.id) != nil
+    }
+
+    private var overrideBinding: Binding<String> {
+        Binding(
+            get: { application.employmentRoleDescriptions[employment.id] ?? "" },
+            set: { application.setRoleDescription($0, for: employment.id) }
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(employment.displayTitle)
+                        .font(.callout.weight(.semibold))
+                        .lineLimit(1)
+                    Text([employment.role, employment.dateRangeText()].filter { !$0.trimmed.isEmpty }.joined(separator: " - "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Text(hasOverride ? "Custom" : "Default")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(hasOverride ? Color.blue : Color.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background((hasOverride ? Color.blue : Color.secondary).opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+
+            LabeledControl("Role Description") {
+                TextEditor(text: overrideBinding)
+                    .font(.body.monospaced())
+                    .frame(minHeight: 72)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Default")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(employment.roleDescription.trimmed.isEmpty ? "No default role description." : employment.roleDescription)
+                    .font(.body.monospaced())
+                    .foregroundStyle(employment.roleDescription.trimmed.isEmpty ? .secondary : .primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(9)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+            }
+        }
+        .padding(12)
+        .background(Color(nsColor: .textBackgroundColor))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
 struct SelectionToggleRow: View {
     let title: String
     let detail: String

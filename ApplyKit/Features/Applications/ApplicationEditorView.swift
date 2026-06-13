@@ -42,6 +42,9 @@ struct ApplicationEditorView: View {
                     roleForm
                 }
                 documentActions
+                if !selectedEmploymentsForRoleDescription.isEmpty {
+                    roleDescriptionsSection
+                }
                 HStack(alignment: .top, spacing: 16) {
                     selectedExperienceSection
                     selectedProjectSection

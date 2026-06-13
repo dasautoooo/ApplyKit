@@ -115,6 +115,53 @@ extension ApplicationEditorView {
         }
     }
 
+    var roleDescriptionsSection: some View {
+        DetailPanel("Role Descriptions") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Override the one-line role description per job for this application. Leave blank to use the default from the Experience Bank.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                let jobs = selectedEmploymentsForRoleDescription
+                if jobs.isEmpty {
+                    Text("Select work experiences above to tune their role descriptions for this application.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(jobs) { employment in
+                            ApplicationRoleDescriptionRow(
+                                application: $application,
+                                employment: employment
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Distinct employments referenced by the application's selected work-like bullets,
+    /// sorted by display order — exactly the jobs that render a resume subsection.
+    var selectedEmploymentsForRoleDescription: [Employment] {
+        let selectedIDs = application.selectedExperienceIDs
+        let employmentsByID: [UUID: Employment] = Dictionary(
+            uniqueKeysWithValues: employments.map { ($0.id, $0) }
+        )
+        var seen = Set<UUID>()
+        var result: [Employment] = []
+        for experience in experiences where selectedIDs.contains(experience.id) && isWorkLikeSelection(experience) {
+            guard let id = experience.employmentID, let employment = employmentsByID[id],
+                  !seen.contains(id) else { continue }
+            seen.insert(id)
+            result.append(employment)
+        }
+        return result.sorted { lhs, rhs in
+            lhs.displayOrder != rhs.displayOrder
+                ? lhs.displayOrder < rhs.displayOrder
+                : lhs.companyName.lowercased() < rhs.companyName.lowercased()
+        }
+    }
+
     struct ExperienceSelectionGroup {
         let title: String
         let bullets: [ExperienceBullet]
