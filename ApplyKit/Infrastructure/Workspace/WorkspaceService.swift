@@ -82,7 +82,8 @@ enum WorkspaceService {
             let render = ResumeRenderer.render(
                 template: templateText, variantSelections: application.selectedVariantIDs,
                 selectedExperiences: selectedExperiences, selectedProjects: selectedProjects, employments: employments,
-                roleDescriptionOverrides: application.employmentRoleDescriptions)
+                roleDescriptionOverrides: application.employmentRoleDescriptions,
+                experienceOrder: application.experienceOrder)
             warnings = render.warnings
             try profile.applying(to: render.rendered).write(to: texURL, atomically: true, encoding: .utf8)
             try copyResumeClassIfAvailable(templateURL: template, outputFolder: outputFolder)

@@ -26,6 +26,7 @@ struct JobApplication: Identifiable, Codable, Hashable {
     var selectedProjectIDsText: String
     var selectedVariantIDsText: String
     var employmentRoleDescriptionsText: String
+    var experienceOrderText: String
     var archivedAt: Date?
     var createdAt: Date
     var updatedAt: Date
@@ -59,6 +60,7 @@ struct JobApplication: Identifiable, Codable, Hashable {
         self.selectedProjectIDsText = ""
         self.selectedVariantIDsText = ""
         self.employmentRoleDescriptionsText = ""
+        self.experienceOrderText = ""
         self.archivedAt = nil
         self.createdAt = Date()
         self.updatedAt = Date()
@@ -174,5 +176,28 @@ extension JobApplication {
             guard let eID = UUID(uuidString: key) else { return nil }
             return (eID, value)
         })
+    }
+
+    /// Per-application bullet ordering: a flat, ordered list of selected experience IDs.
+    /// Grouping (by employment / project bucket) is applied separately by callers.
+    var experienceOrder: [UUID] {
+        experienceOrderText.split(separator: ",").compactMap { UUID(uuidString: String($0)) }
+    }
+
+    mutating func setExperienceOrder(_ ids: [UUID]) {
+        experienceOrderText = ids.map(\.uuidString).joined(separator: ",")
+        updatedAt = Date()
+    }
+
+    /// Sort bullets by their position in `experienceOrder`, falling back to `createdAt`
+    /// for any bullet not present in the stored order. Single source of truth for
+    /// within-group ordering, reused by the renderer and the editor UI.
+    func orderedExperiences(_ bullets: [ExperienceBullet]) -> [ExperienceBullet] {
+        let index = Dictionary(uniqueKeysWithValues: experienceOrder.enumerated().map { ($0.element, $0.offset) })
+        return bullets.sorted { lhs, rhs in
+            let li = index[lhs.id] ?? Int.max
+            let ri = index[rhs.id] ?? Int.max
+            return li != ri ? li < ri : lhs.createdAt < rhs.createdAt
+        }
     }
 }

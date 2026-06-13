@@ -8,12 +8,14 @@ enum ResumeRenderer {
 
     static func render(template: String, variantSelections: [UUID: UUID],
                        selectedExperiences: [ExperienceBullet], selectedProjects: [ExperienceBullet],
-                       employments: [Employment], roleDescriptionOverrides: [UUID: String] = [:]) -> RenderResult {
+                       employments: [Employment], roleDescriptionOverrides: [UUID: String] = [:],
+                       experienceOrder: [UUID] = []) -> RenderResult {
+        let orderIndex = Dictionary(uniqueKeysWithValues: experienceOrder.enumerated().map { ($0.element, $0.offset) })
         let experience = experienceBlock(selectedExperiences: selectedExperiences,
                                          variantSelections: variantSelections, employments: employments,
-                                         roleDescriptionOverrides: roleDescriptionOverrides)
+                                         roleDescriptionOverrides: roleDescriptionOverrides, orderIndex: orderIndex)
         let projects = projectBlock(selectedProjects: selectedProjects,
-                                     variantSelections: variantSelections, employments: employments)
+                                     variantSelections: variantSelections, employments: employments, orderIndex: orderIndex)
         let rendered = template
             .replacingOccurrences(of: experiencePlaceholder, with: experience.block)
             .replacingOccurrences(of: projectsPlaceholder, with: projects.block)
@@ -22,7 +24,8 @@ enum ResumeRenderer {
 
     static func experienceBlock(selectedExperiences: [ExperienceBullet], variantSelections: [UUID: UUID],
                                  employments: [Employment],
-                                 roleDescriptionOverrides: [UUID: String] = [:]) -> (block: String, warnings: [String]) {
+                                 roleDescriptionOverrides: [UUID: String] = [:],
+                                 orderIndex: [UUID: Int] = [:]) -> (block: String, warnings: [String]) {
         guard !selectedExperiences.isEmpty else { return ("% No experience bullets selected.", []) }
         let employmentsByID = Dictionary(uniqueKeysWithValues: employments.map { ($0.id, $0) })
         var grouped: [UUID: [ExperienceBullet]] = [:]
@@ -33,7 +36,11 @@ enum ResumeRenderer {
         }
         let groups: [(Employment, [ExperienceBullet])] = grouped.compactMap { id, bullets in
             guard let emp = employmentsByID[id] else { return nil }
-            return (emp, bullets.sorted { $0.createdAt < $1.createdAt })
+            return (emp, bullets.sorted { lhs, rhs in
+                let li = orderIndex[lhs.id] ?? Int.max
+                let ri = orderIndex[rhs.id] ?? Int.max
+                return li != ri ? li < ri : lhs.createdAt < rhs.createdAt
+            })
         }.sorted { lhs, rhs in
             lhs.0.displayOrder != rhs.0.displayOrder
                 ? lhs.0.displayOrder < rhs.0.displayOrder
@@ -53,13 +60,16 @@ enum ResumeRenderer {
     }
 
     static func projectBlock(selectedProjects: [ExperienceBullet], variantSelections: [UUID: UUID],
-                              employments: [Employment]) -> (block: String, warnings: [String]) {
+                              employments: [Employment], orderIndex: [UUID: Int] = [:]) -> (block: String, warnings: [String]) {
         guard !selectedProjects.isEmpty else { return ("% No projects selected.", []) }
         let employmentsByID = Dictionary(uniqueKeysWithValues: employments.map { ($0.id, $0) })
         let sorted = selectedProjects.sorted { lhs, rhs in
             let lo = lhs.employmentID.flatMap { employmentsByID[$0] }?.displayOrder ?? Int.max
             let ro = rhs.employmentID.flatMap { employmentsByID[$0] }?.displayOrder ?? Int.max
-            return lo != ro ? lo < ro : lhs.createdAt < rhs.createdAt
+            if lo != ro { return lo < ro }
+            let li = orderIndex[lhs.id] ?? Int.max
+            let ri = orderIndex[rhs.id] ?? Int.max
+            return li != ri ? li < ri : lhs.createdAt < rhs.createdAt
         }
         let rendered = sorted.map {
             renderProjectSubsection(project: $0, variantID: variantSelections[$0.id],

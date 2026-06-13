@@ -37,6 +37,10 @@ struct ApplicationExperienceWordingRow: View {
     let settings: AppSettings?
     let onPersistExperience: (ExperienceBullet) -> Void
     let onPersistApplication: (JobApplication) -> Void
+    var canMoveUp: Bool = false
+    var canMoveDown: Bool = false
+    var onMoveUp: () -> Void = {}
+    var onMoveDown: () -> Void = {}
     @State private var variantPendingDeletion: ExperienceVariation?
     @State private var showDeleteVariantConfirmation = false
     @State private var isRefining = false
@@ -55,6 +59,22 @@ struct ApplicationExperienceWordingRow: View {
                 }
 
                 Spacer()
+
+                HStack(spacing: 4) {
+                    Button(action: onMoveUp) {
+                        Image(systemName: "chevron.up")
+                    }
+                    .controlSize(.small)
+                    .disabled(!canMoveUp)
+                    .help("Move up within this section")
+
+                    Button(action: onMoveDown) {
+                        Image(systemName: "chevron.down")
+                    }
+                    .controlSize(.small)
+                    .disabled(!canMoveDown)
+                    .help("Move down within this section")
+                }
 
                 Text(selectedVariant == nil ? "Base" : "Variant")
                     .font(.caption2.weight(.semibold))
@@ -279,6 +299,8 @@ struct ApplicationExperienceWordingRow: View {
 struct ApplicationRoleDescriptionRow: View {
     @Binding var application: JobApplication
     let employment: Employment
+    /// When true, render without the card chrome (used as a group header inside a container).
+    var embedded: Bool = false
 
     private var hasOverride: Bool {
         application.roleDescription(for: employment.id) != nil
@@ -294,6 +316,9 @@ struct ApplicationRoleDescriptionRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 10) {
+                Image(systemName: "briefcase.fill")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(employment.displayTitle)
                         .font(.callout.weight(.semibold))
@@ -331,17 +356,19 @@ struct ApplicationRoleDescriptionRow: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(9)
-                    .background(Color(nsColor: .controlBackgroundColor))
+                    .background(Color(nsColor: .textBackgroundColor))
                     .clipShape(RoundedRectangle(cornerRadius: 7))
             }
         }
-        .padding(12)
-        .background(Color(nsColor: .textBackgroundColor))
+        .padding(embedded ? 0 : 12)
+        .background(embedded ? Color.clear : Color(nsColor: .textBackgroundColor))
         .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
+            if !embedded {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
+            }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: embedded ? 0 : 8))
     }
 }
 

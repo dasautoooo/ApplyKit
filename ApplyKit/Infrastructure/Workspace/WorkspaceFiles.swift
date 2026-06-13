@@ -103,6 +103,7 @@ enum WorkspaceFiles {
             selectedProjectIDs: application.selectedProjectIDs.map(\.uuidString).sorted(),
             selectedVariantIDs: variantSelectionDTO(from: application),
             selectedRoleDescriptions: roleDescriptionDTO(from: application),
+            experienceOrder: application.experienceOrder.map(\.uuidString),
             archivedAt: WorkspaceDateCodec.string(from: application.archivedAt),
             createdAt: WorkspaceDateCodec.string(from: application.createdAt), updatedAt: WorkspaceDateCodec.string(from: application.updatedAt),
             paths: ApplicationPathsDTO(jobDescription: jobDescriptionFile, notes: notesFile, jdAnalysis: jdAnalysisFile),
@@ -123,6 +124,7 @@ enum WorkspaceFiles {
         app.selectedProjectIDsText = (dto.selectedProjectIDs ?? []).sorted().joined(separator: ",")
         app.selectedVariantIDsText = JobApplication.encodeVariantSelections(variantSelections(from: dto.selectedVariantIDs))
         app.employmentRoleDescriptionsText = JobApplication.encodeRoleDescriptions(roleDescriptions(from: dto.selectedRoleDescriptions))
+        app.experienceOrderText = (dto.experienceOrder ?? []).joined(separator: ",")
         app.archivedAt = WorkspaceDateCodec.date(from: dto.archivedAt)
         app.createdAt = WorkspaceDateCodec.date(from: dto.createdAt) ?? Date()
         app.updatedAt = WorkspaceDateCodec.date(from: dto.updatedAt) ?? Date()

@@ -87,27 +87,20 @@ extension ApplicationEditorView {
     }
 
     var selectedBulletWordingSection: some View {
-        DetailPanel("Selected Bullet Wording") {
+        DetailPanel("Tailor Experience") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Choose base wording or a named variant for each selected experience.")
+                Text("Each job groups its selected bullets below. Set the role description, choose base wording or a named variant per bullet, and reorder bullets within the job.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                let selectedItems = selectedExperiencesForWording
-                if selectedItems.isEmpty {
+                let groups = wordingGroups
+                if groups.isEmpty {
                     Text("Select an experience or project above to tune its wording for this application.")
                         .foregroundStyle(.secondary)
                 } else {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(selectedItems) { experience in
-                            ApplicationExperienceWordingRow(
-                                application: $application,
-                                experience: experienceBinding(for: experience.id),
-                                applications: applications,
-                                settings: settings,
-                                onPersistExperience: persistExperienceChanges,
-                                onPersistApplication: persistApplicationChanges
-                            )
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        ForEach(groups) { group in
+                            wordingGroupCard(group)
                         }
                     }
                 }
@@ -115,51 +108,153 @@ extension ApplicationEditorView {
         }
     }
 
-    var roleDescriptionsSection: some View {
-        DetailPanel("Role Descriptions") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Override the one-line role description per job for this application. Leave blank to use the default from the Experience Bank.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                let jobs = selectedEmploymentsForRoleDescription
-                if jobs.isEmpty {
-                    Text("Select work experiences above to tune their role descriptions for this application.")
+    @ViewBuilder
+    private func wordingGroupCard(_ group: WordingGroup) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Group header — names the employment (or project bucket) the bullets belong to.
+            if let employment = group.employment {
+                ApplicationRoleDescriptionRow(
+                    application: $application,
+                    employment: employment,
+                    embedded: true
+                )
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: group.isProject ? "folder.fill" : "tray.fill")
+                        .font(.callout)
                         .foregroundStyle(.secondary)
-                } else {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(jobs) { employment in
-                            ApplicationRoleDescriptionRow(
-                                application: $application,
-                                employment: employment
-                            )
-                        }
+                    Text(group.title)
+                        .font(.callout.weight(.semibold))
+                        .lineLimit(2)
+                }
+            }
+
+            Divider()
+
+            // Bullets, indented behind a left accent rule to show they belong to this job.
+            HStack(alignment: .top, spacing: 10) {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(Color.accentColor.opacity(0.35))
+                    .frame(width: 3)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(group.bullets.enumerated()), id: \.element.id) { index, experience in
+                        ApplicationExperienceWordingRow(
+                            application: $application,
+                            experience: experienceBinding(for: experience.id),
+                            applications: applications,
+                            settings: settings,
+                            onPersistExperience: persistExperienceChanges,
+                            onPersistApplication: persistApplicationChanges,
+                            canMoveUp: index > 0,
+                            canMoveDown: index < group.bullets.count - 1,
+                            onMoveUp: { moveExperience(experience.id, in: group, by: -1) },
+                            onMoveDown: { moveExperience(experience.id, in: group, by: 1) }
+                        )
                     }
                 }
             }
         }
+        .padding(14)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.6), lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
-    /// Distinct employments referenced by the application's selected work-like bullets,
-    /// sorted by display order — exactly the jobs that render a resume subsection.
-    var selectedEmploymentsForRoleDescription: [Employment] {
-        let selectedIDs = application.selectedExperienceIDs
+    struct WordingGroup: Identifiable {
+        let id: String
+        let title: String
+        let employment: Employment?
+        let bullets: [ExperienceBullet]
+        let isProject: Bool
+    }
+
+    /// Selected bullets grouped for the wording section: work-like bullets grouped by employment
+    /// (sorted by display order, plus a trailing "Unassigned" group), followed by project-like
+    /// bullets bucketed like `projectSelectionGroups`. Each group's bullets are ordered via the
+    /// per-application order (`JobApplication.orderedExperiences`).
+    var wordingGroups: [WordingGroup] {
+        let selectedIDs = application.selectedExperienceIDs.union(application.selectedProjectIDs)
         let employmentsByID: [UUID: Employment] = Dictionary(
             uniqueKeysWithValues: employments.map { ($0.id, $0) }
         )
-        var seen = Set<UUID>()
-        var result: [Employment] = []
-        for experience in experiences where selectedIDs.contains(experience.id) && isWorkLikeSelection(experience) {
-            guard let id = experience.employmentID, let employment = employmentsByID[id],
-                  !seen.contains(id) else { continue }
-            seen.insert(id)
-            result.append(employment)
+        let selected = experiences.filter { selectedIDs.contains($0.id) }
+
+        // Work-like bullets grouped by employment.
+        var workBuckets: [UUID: [ExperienceBullet]] = [:]
+        var unassignedWork: [ExperienceBullet] = []
+        for experience in selected where isWorkLikeSelection(experience) {
+            if let id = experience.employmentID, employmentsByID[id] != nil {
+                workBuckets[id, default: []].append(experience)
+            } else {
+                unassignedWork.append(experience)
+            }
         }
-        return result.sorted { lhs, rhs in
-            lhs.displayOrder != rhs.displayOrder
-                ? lhs.displayOrder < rhs.displayOrder
-                : lhs.companyName.lowercased() < rhs.companyName.lowercased()
+        var groups: [WordingGroup] = workBuckets.compactMap { id, bullets in
+            guard let employment = employmentsByID[id] else { return nil }
+            return WordingGroup(id: "emp-\(id.uuidString)",
+                                title: employment.summaryLine,
+                                employment: employment,
+                                bullets: application.orderedExperiences(bullets),
+                                isProject: false)
+        }.sorted { lhs, rhs in
+            let lo = lhs.employment?.displayOrder ?? Int.max
+            let ro = rhs.employment?.displayOrder ?? Int.max
+            return lo != ro ? lo < ro : lhs.title.lowercased() < rhs.title.lowercased()
         }
+        if !unassignedWork.isEmpty {
+            groups.append(WordingGroup(id: "work-unassigned", title: "Unassigned",
+                                       employment: nil,
+                                       bullets: application.orderedExperiences(unassignedWork),
+                                       isProject: false))
+        }
+
+        // Project-like bullets, bucketed by title (mirrors projectSelectionGroups).
+        var projectBuckets: [String: (order: Int, bullets: [ExperienceBullet])] = [:]
+        for experience in selected where isProjectLikeSelection(experience) {
+            let key: String
+            let order: Int
+            if experience.isPersonalProject {
+                key = "Personal Projects"; order = Int.max - 1
+            } else if let id = experience.employmentID, let employment = employmentsByID[id] {
+                key = employment.displayTitle; order = employment.displayOrder
+            } else {
+                key = experience.sourceTitle.trimmed.isEmpty ? "Projects" : experience.sourceTitle; order = Int.max
+            }
+            projectBuckets[key, default: (order, [])].bullets.append(experience)
+        }
+        let projectGroups = projectBuckets
+            .map { key, value in
+                WordingGroup(id: "proj-\(key)", title: key, employment: nil,
+                             bullets: application.orderedExperiences(value.bullets), isProject: true)
+            }
+            .sorted { lhs, rhs in
+                let lo = projectBuckets[lhs.title]?.order ?? Int.max
+                let ro = projectBuckets[rhs.title]?.order ?? Int.max
+                return lo != ro ? lo < ro : lhs.title.lowercased() < rhs.title.lowercased()
+            }
+        groups.append(contentsOf: projectGroups)
+        return groups
+    }
+
+    /// Reorder a bullet within its wording group by ±1, persisting the per-application order.
+    func moveExperience(_ id: UUID, in group: WordingGroup, by delta: Int) {
+        let groupIDs = group.bullets.map(\.id)
+        guard let pos = groupIDs.firstIndex(of: id) else { return }
+        let target = pos + delta
+        guard target >= 0, target < groupIDs.count else { return }
+        let neighbor = groupIDs[target]
+
+        // Materialize the full display order across all groups (groups are contiguous, so the
+        // in-group neighbor is also the adjacent element in this flattened list).
+        var fullOrder = wordingGroups.flatMap { $0.bullets.map(\.id) }
+        guard let i = fullOrder.firstIndex(of: id), let j = fullOrder.firstIndex(of: neighbor) else { return }
+        fullOrder.swapAt(i, j)
+        application.setExperienceOrder(fullOrder)
+        persistApplicationChanges()
     }
 
     struct ExperienceSelectionGroup {
@@ -225,26 +320,6 @@ extension ApplicationEditorView {
             .sorted { lhs, rhs in
                 if lhs.order != rhs.order { return lhs.order < rhs.order }
                 return lhs.title.lowercased() < rhs.title.lowercased()
-            }
-    }
-
-    var selectedExperiencesForWording: [ExperienceBullet] {
-        let selectedIDs = application.selectedExperienceIDs.union(application.selectedProjectIDs)
-        let employmentOrderByID: [UUID: Int] = Dictionary(
-            uniqueKeysWithValues: employments.map { ($0.id, $0.displayOrder) }
-        )
-
-        return experiences
-            .filter { selectedIDs.contains($0.id) }
-            .sorted { lhs, rhs in
-                let lhsProject = isProjectLikeSelection(lhs)
-                let rhsProject = isProjectLikeSelection(rhs)
-                if lhsProject != rhsProject { return !lhsProject }
-
-                let lhsOrder = lhs.employmentID.flatMap { employmentOrderByID[$0] } ?? Int.max
-                let rhsOrder = rhs.employmentID.flatMap { employmentOrderByID[$0] } ?? Int.max
-                if lhsOrder != rhsOrder { return lhsOrder < rhsOrder }
-                return lhs.createdAt < rhs.createdAt
             }
     }
 

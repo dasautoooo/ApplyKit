@@ -41,6 +41,7 @@ struct ApplicationFileDTO: Codable {
     var referralContact: String; var recruiterContact: String; var nextAction: String; var coverLetterNeeded: Bool
     var selectedExperienceIDs: [String]; var selectedProjectIDs: [String]?; var selectedVariantIDs: [String: String]?
     var selectedRoleDescriptions: [String: String]?
+    var experienceOrder: [String]?
     var archivedAt: String?; var createdAt: String?; var updatedAt: String?
     var paths: ApplicationPathsDTO; var documents: [ApplicationDocumentLinkDTO]
     enum CodingKeys: String, CodingKey {
@@ -51,6 +52,7 @@ struct ApplicationFileDTO: Codable {
         case coverLetterNeeded = "cover_letter_needed"; case selectedExperienceIDs = "selected_experience_ids"
         case selectedProjectIDs = "selected_project_ids"; case selectedVariantIDs = "selected_variant_ids"
         case selectedRoleDescriptions = "role_descriptions"
+        case experienceOrder = "experience_order"
         case archivedAt = "archived_at"; case createdAt = "created_at"; case updatedAt = "updated_at"
         case paths; case documents
     }
