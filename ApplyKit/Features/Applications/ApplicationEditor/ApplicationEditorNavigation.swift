@@ -5,6 +5,16 @@
 
 import SwiftUI
 
+/// Holds the editor's scroll-tracking state. Kept in an `@Observable` model (rather than `@State`
+/// on the editor) so updating the highlighted section while scrolling re-renders only the rail —
+/// not the heavy editor content, which never reads `active`.
+@Observable final class EditorScrollModel {
+    var active: EditorSection = .roleDetails
+    /// Suppresses scroll-position tracking while a rail click animates, so the programmatic
+    /// scroll isn't perturbed by `onPreferenceChange` firing mid-animation.
+    var isAutoScrolling = false
+}
+
 /// Sections of the application editor, in display order, used by the navigation side rail.
 enum EditorSection: Int, CaseIterable, Identifiable {
     case roleDetails
@@ -81,13 +91,13 @@ extension View {
 
 /// Always-visible table of contents for the application editor.
 struct EditorSectionRail: View {
-    let active: EditorSection
+    let model: EditorScrollModel
     let onSelect: (EditorSection) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(EditorSection.allCases) { section in
-                let isActive = section == active
+                let isActive = section == model.active
                 Button {
                     onSelect(section)
                 } label: {

@@ -282,17 +282,28 @@ extension ApplicationEditorView {
         var target = targetApplication
         target.updatedAt = Date()
         guard let settings else { return }
-        do {
-            let docs = store.documents.filter { $0.applicationID == target.id }
-            try WorkspaceSyncService.persistApplication(target, documents: docs, settings: settings)
-            if let idx = store.applications.firstIndex(where: { $0.id == target.id }) {
-                store.applications[idx] = target
+
+        // Update the in-memory store synchronously (cheap) so the sidebar and other views
+        // reflect the edit immediately...
+        let docs = store.documents.filter { $0.applicationID == target.id }
+        if let idx = store.applications.firstIndex(where: { $0.id == target.id }) {
+            store.applications[idx] = target
+        }
+        if target.id == application.id {
+            application = target
+        }
+
+        // ...then write the files to disk off the main thread so typing never blocks on I/O.
+        guard let root = try? WorkspaceService.workspaceURL(settings: settings) else { return }
+        let snapshot = target
+        let monitor = activityMonitor
+        Task.detached(priority: .utility) {
+            do {
+                try WorkspaceSyncService.writeApplicationFiles(snapshot, documents: docs, root: root)
+            } catch {
+                let message = error.localizedDescription
+                await MainActor.run { monitor.fail(message) }
             }
-            if target.id == application.id {
-                application = target
-            }
-        } catch {
-            activityMonitor.fail(error.localizedDescription)
         }
     }
 

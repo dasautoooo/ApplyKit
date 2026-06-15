@@ -58,9 +58,16 @@ enum WorkspaceSyncService {
 
     static func persistApplication(_ application: JobApplication, documents: [GeneratedDocument], settings: AppSettings) throws {
         let root = try WorkspaceService.workspaceURL(settings: settings)
+        try writeApplicationFiles(application, documents: documents, root: root)
+    }
+
+    /// File-writing core of `persistApplication`, callable off the main actor. `root` must be
+    /// pre-resolved on the main actor via `WorkspaceService.workspaceURL(settings:)`. Used by the
+    /// editor's debounced autosave to keep disk I/O off the main thread.
+    nonisolated static func writeApplicationFiles(_ application: JobApplication, documents: [GeneratedDocument], root: URL) throws {
         let didStart = root.startAccessingSecurityScopedResource()
         defer { if didStart { root.stopAccessingSecurityScopedResource() } }
-        try WorkspaceFiles.ensureWorkspaceFiles(at: root, settings: settings)
+        try WorkspaceFiles.ensureBaseDirectories(at: root)
         let appFolder = try WorkspaceFiles.fileURLForApplication(application, in: root)
         for dir in [appFolder,
             appFolder.appendingPathComponent(WorkspaceFiles.resumeDirectory, isDirectory: true),
@@ -81,9 +88,14 @@ enum WorkspaceSyncService {
 
     static func persistExperience(_ experience: ExperienceBullet, allExperiences: [ExperienceBullet], settings: AppSettings) throws {
         let root = try WorkspaceService.workspaceURL(settings: settings)
+        try writeExperienceFiles(experience, allExperiences: allExperiences, root: root)
+    }
+
+    /// File-writing core of `persistExperience`, callable off the main actor (see `writeApplicationFiles`).
+    nonisolated static func writeExperienceFiles(_ experience: ExperienceBullet, allExperiences: [ExperienceBullet], root: URL) throws {
         let didStart = root.startAccessingSecurityScopedResource()
         defer { if didStart { root.stopAccessingSecurityScopedResource() } }
-        try WorkspaceFiles.ensureWorkspaceFiles(at: root, settings: settings)
+        try WorkspaceFiles.ensureBaseDirectories(at: root)
         let desiredURL = try WorkspaceFiles.fileURLForExperience(experience, in: root)
         let existingURL = try WorkspaceFiles.findExperienceFile(id: experience.id, in: root)
         if let existing = existingURL, existing.standardizedFileURL.path != desiredURL.standardizedFileURL.path {
@@ -303,7 +315,7 @@ enum WorkspaceSyncService {
         }
     }
 
-    private static func writeExperienceIndex(_ experiences: [ExperienceBullet], root: URL) throws {
+    nonisolated private static func writeExperienceIndex(_ experiences: [ExperienceBullet], root: URL) throws {
         let entries = try experiences.sorted { $0.displayTitle < $1.displayTitle }.map { exp in
             ExperienceBankIndexEntryDTO(id: exp.id.uuidString, title: exp.displayTitle, company: exp.company,
                 category: exp.roleCategoryRaw, path: try WorkspaceFiles.relativePath(from: root, to: WorkspaceFiles.fileURLForExperience(exp, in: root)))

@@ -15,7 +15,8 @@ enum ApplicationListScope: String, CaseIterable, Identifiable {
 
 struct ApplicationRow: View {
     let application: JobApplication
-    let documents: [GeneratedDocument]
+    let hasResume: Bool
+    let hasCoverLetter: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -58,14 +59,6 @@ struct ApplicationRow: View {
             }
         }
         .padding(.vertical, 4)
-    }
-
-    private var hasResume: Bool {
-        documents.contains { $0.kindRaw == GeneratedDocumentKind.resume.rawValue }
-    }
-
-    private var hasCoverLetter: Bool {
-        documents.contains { $0.kindRaw == GeneratedDocumentKind.coverLetter.rawValue }
     }
 
     private var priorityColor: Color {

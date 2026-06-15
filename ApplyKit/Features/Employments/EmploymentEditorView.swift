@@ -5,6 +5,7 @@ struct EmploymentEditorView: View {
     @Environment(AppDataStore.self) private var store
     @State var employment: Employment
     let settings: AppSettings?
+    @State private var saveDebouncer = Debouncer()
 
     var allEmployments: [Employment] { store.employments }
 
@@ -45,7 +46,8 @@ struct EmploymentEditorView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .navigationTitle(employment.displayTitle)
-        .onChange(of: persistenceFingerprint) { _, _ in persist() }
+        .onChange(of: persistenceFingerprint) { _, _ in saveDebouncer.schedule { persist() } }
+        .onDisappear { saveDebouncer.flush { persist() } }
     }
 
     private var header: some View {

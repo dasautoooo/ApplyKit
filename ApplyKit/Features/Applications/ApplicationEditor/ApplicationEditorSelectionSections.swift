@@ -31,6 +31,8 @@ extension ApplicationEditorView {
                     Text("No experience items yet.")
                         .foregroundStyle(.secondary)
                 } else {
+                    // Decode the selected-ID set once per render instead of inside every row's binding.
+                    let selectedExperienceIDs = application.selectedExperienceIDs
                     LazyVStack(alignment: .leading, spacing: 14) {
                         ForEach(selectionGroups, id: \.title) { group in
                             SelectionGroupView(title: group.title) {
@@ -39,7 +41,7 @@ extension ApplicationEditorView {
                                         title: experience.displayTitle,
                                         detail: [experience.skillsText].filter { !$0.trimmed.isEmpty }.joined(separator: " - "),
                                         isOn: Binding(
-                                            get: { application.selectedExperienceIDs.contains(experience.id) },
+                                            get: { selectedExperienceIDs.contains(experience.id) },
                                             set: { application.setExperience(experience.id, selected: $0) }
                                         )
                                     )
@@ -64,6 +66,8 @@ extension ApplicationEditorView {
                     Text("No personal, project, or open-source items yet. Add personal projects in Experience Bank.")
                         .foregroundStyle(.secondary)
                 } else {
+                    // Decode the selected-ID set once per render instead of inside every row's binding.
+                    let selectedProjectIDs = application.selectedProjectIDs
                     LazyVStack(alignment: .leading, spacing: 14) {
                         ForEach(projectSelectionGroups, id: \.title) { group in
                             SelectionGroupView(title: group.title) {
@@ -72,7 +76,7 @@ extension ApplicationEditorView {
                                         title: project.displayTitle,
                                         detail: [project.company, project.skillsText].filter { !$0.trimmed.isEmpty }.joined(separator: " - "),
                                         isOn: Binding(
-                                            get: { application.selectedProjectIDs.contains(project.id) },
+                                            get: { selectedProjectIDs.contains(project.id) },
                                             set: { application.setProject(project.id, selected: $0) }
                                         )
                                     )
@@ -183,10 +187,23 @@ extension ApplicationEditorView {
         )
         let selected = experiences.filter { selectedIDs.contains($0.id) }
 
+        // Decode the per-application bullet order once and reuse for every group, instead of
+        // re-splitting `experienceOrderText` inside `orderedExperiences` for each group.
+        let orderIndex = Dictionary(
+            uniqueKeysWithValues: application.experienceOrder.enumerated().map { ($0.element, $0.offset) }
+        )
+        func ordered(_ bullets: [ExperienceBullet]) -> [ExperienceBullet] {
+            bullets.sorted { lhs, rhs in
+                let li = orderIndex[lhs.id] ?? Int.max
+                let ri = orderIndex[rhs.id] ?? Int.max
+                return li != ri ? li < ri : lhs.createdAt < rhs.createdAt
+            }
+        }
+
         // Work-like bullets grouped by employment.
         var workBuckets: [UUID: [ExperienceBullet]] = [:]
         var unassignedWork: [ExperienceBullet] = []
-        for experience in selected where isWorkLikeSelection(experience) {
+        for experience in selected where isWorkLikeSelection(experience, employmentsByID: employmentsByID) {
             if let id = experience.employmentID, employmentsByID[id] != nil {
                 workBuckets[id, default: []].append(experience)
             } else {
@@ -198,7 +215,7 @@ extension ApplicationEditorView {
             return WordingGroup(id: "emp-\(id.uuidString)",
                                 title: employment.summaryLine,
                                 employment: employment,
-                                bullets: application.orderedExperiences(bullets),
+                                bullets: ordered(bullets),
                                 isProject: false)
         }.sorted { lhs, rhs in
             let lo = lhs.employment?.displayOrder ?? Int.max
@@ -208,13 +225,13 @@ extension ApplicationEditorView {
         if !unassignedWork.isEmpty {
             groups.append(WordingGroup(id: "work-unassigned", title: "Unassigned",
                                        employment: nil,
-                                       bullets: application.orderedExperiences(unassignedWork),
+                                       bullets: ordered(unassignedWork),
                                        isProject: false))
         }
 
         // Project-like bullets, bucketed by title (mirrors projectSelectionGroups).
         var projectBuckets: [String: (order: Int, bullets: [ExperienceBullet])] = [:]
-        for experience in selected where isProjectLikeSelection(experience) {
+        for experience in selected where isProjectLikeSelection(experience, employmentsByID: employmentsByID) {
             let key: String
             let order: Int
             if experience.isPersonalProject {
@@ -229,7 +246,7 @@ extension ApplicationEditorView {
         let projectGroups = projectBuckets
             .map { key, value in
                 WordingGroup(id: "proj-\(key)", title: key, employment: nil,
-                             bullets: application.orderedExperiences(value.bullets), isProject: true)
+                             bullets: ordered(value.bullets), isProject: true)
             }
             .sorted { lhs, rhs in
                 let lo = projectBuckets[lhs.title]?.order ?? Int.max
@@ -270,7 +287,7 @@ extension ApplicationEditorView {
         var buckets: [String: (order: Int, bullets: [ExperienceBullet])] = [:]
         let unassignedKey = "Unassigned"
         for experience in experiences {
-            guard isWorkLikeSelection(experience) else { continue }
+            guard isWorkLikeSelection(experience, employmentsByID: employmentsByID) else { continue }
             if let id = experience.employmentID, let employment = employmentsByID[id] {
                 let title = employment.summaryLine.isEmpty ? "Untitled Employment" : employment.summaryLine
                 buckets[title, default: (employment.displayOrder, [])].bullets.append(experience)
@@ -298,7 +315,7 @@ extension ApplicationEditorView {
         )
         var buckets: [String: (order: Int, bullets: [ExperienceBullet])] = [:]
         for experience in experiences {
-            guard isProjectLikeSelection(experience) else { continue }
+            guard isProjectLikeSelection(experience, employmentsByID: employmentsByID) else { continue }
             if experience.isPersonalProject {
                 buckets["Personal Projects", default: (Int.max - 1, [])].bullets.append(experience)
             } else if let id = experience.employmentID, let employment = employmentsByID[id] {
@@ -324,9 +341,14 @@ extension ApplicationEditorView {
     }
 
     func isProjectLikeSelection(_ experience: ExperienceBullet) -> Bool {
+        isProjectLikeSelection(experience, employmentsByID: Dictionary(uniqueKeysWithValues: employments.map { ($0.id, $0) }))
+    }
+
+    /// Dictionary-keyed variant for hot loops — avoids an O(employments) `first(where:)` per call.
+    func isProjectLikeSelection(_ experience: ExperienceBullet, employmentsByID: [UUID: Employment]) -> Bool {
         if experience.isProjectLike { return true }
         guard let employmentID = experience.employmentID,
-              let employment = employments.first(where: { $0.id == employmentID }) else {
+              let employment = employmentsByID[employmentID] else {
             return false
         }
         return employment.experienceCategory == .project || employment.experienceCategory == .openSource
@@ -334,6 +356,10 @@ extension ApplicationEditorView {
 
     func isWorkLikeSelection(_ experience: ExperienceBullet) -> Bool {
         !isProjectLikeSelection(experience)
+    }
+
+    func isWorkLikeSelection(_ experience: ExperienceBullet, employmentsByID: [UUID: Employment]) -> Bool {
+        !isProjectLikeSelection(experience, employmentsByID: employmentsByID)
     }
 
     func experienceBinding(for id: UUID) -> Binding<ExperienceBullet> {

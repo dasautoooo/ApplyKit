@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var isDetectingCodex = false
     @State private var isDetectingClaude = false
     @State private var showResetConfirmation = false
+    @State private var settingsSaveDebouncer = Debouncer()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,8 +45,9 @@ struct SettingsView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .fixedSize(horizontal: false, vertical: true)
         .onChange(of: settingsPersistenceFingerprint) { _, _ in
-            persistSettingsChanges()
+            settingsSaveDebouncer.schedule { persistSettingsChanges() }
         }
+        .onDisappear { settingsSaveDebouncer.flush { persistSettingsChanges() } }
         .confirmationDialog(
             "Reset all ApplyKit data?",
             isPresented: $showResetConfirmation
@@ -324,6 +326,7 @@ private struct ProfileSettingsPaneView: View {
     @Environment(AppDataStore.self) private var store
     var settings: AppSettings
     @Binding var statusMessage: String
+    @State private var profileSaveDebouncer = Debouncer()
 
     var body: some View {
         @Bindable var store = store
@@ -391,7 +394,8 @@ private struct ProfileSettingsPaneView: View {
                 }
             }
         }
-        .onChange(of: profileFingerprint) { _, _ in saveProfile() }
+        .onChange(of: profileFingerprint) { _, _ in profileSaveDebouncer.schedule { saveProfile() } }
+        .onDisappear { profileSaveDebouncer.flush { saveProfile() } }
     }
 
     private var profileFingerprint: String {

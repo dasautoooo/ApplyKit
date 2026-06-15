@@ -29,10 +29,12 @@ struct ApplicationsWorkspaceView: View {
                 filterBar
 
                 List(selection: $selectedApplicationID) {
+                    let flags = documentFlags
                     ForEach(filteredApplications) { application in
                         ApplicationRow(
                             application: application,
-                            documents: store.documents.filter { $0.applicationID == application.id }
+                            hasResume: flags[application.id]?.resume ?? false,
+                            hasCoverLetter: flags[application.id]?.coverLetter ?? false
                         )
                         .tag(application.id)
                         .contextMenu {
@@ -217,6 +219,19 @@ struct ApplicationsWorkspaceView: View {
     private var selectedApplication: JobApplication? {
         guard let selectedApplicationID else { return nil }
         return store.applications.first { $0.id == selectedApplicationID }
+    }
+
+    /// Resume/cover-letter presence per application, computed in a single pass over
+    /// `store.documents` so rows don't each scan the whole documents array while scrolling.
+    private var documentFlags: [UUID: (resume: Bool, coverLetter: Bool)] {
+        var flags: [UUID: (resume: Bool, coverLetter: Bool)] = [:]
+        for document in store.documents {
+            var entry = flags[document.applicationID] ?? (false, false)
+            if document.kindRaw == GeneratedDocumentKind.resume.rawValue { entry.resume = true }
+            else if document.kindRaw == GeneratedDocumentKind.coverLetter.rawValue { entry.coverLetter = true }
+            flags[document.applicationID] = entry
+        }
+        return flags
     }
 
     private func addApplication() {

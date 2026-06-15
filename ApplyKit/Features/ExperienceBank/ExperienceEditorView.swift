@@ -7,6 +7,7 @@ struct ExperienceEditorView: View {
     let settings: AppSettings?
     @State private var variantPendingDeletion: ExperienceVariation?
     @State private var showDeleteVariantConfirmation = false
+    @State private var saveDebouncer = Debouncer()
 
     var allExperiences: [ExperienceBullet] { store.experiences }
     var employments: [Employment] { store.employments }
@@ -28,7 +29,8 @@ struct ExperienceEditorView: View {
             .frame(maxWidth: .infinity, alignment: .center)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .onChange(of: persistenceFingerprint) { _, _ in persist() }
+        .onChange(of: persistenceFingerprint) { _, _ in saveDebouncer.schedule { persist() } }
+        .onDisappear { saveDebouncer.flush { persist() } }
         .confirmationDialog("Delete this variant?", isPresented: $showDeleteVariantConfirmation, presenting: variantPendingDeletion) { variant in
             Button("Delete \(variant.displayName)", role: .destructive) { deleteVariant(variant.id) }
             Button("Cancel", role: .cancel) {}
@@ -55,12 +57,20 @@ struct ExperienceEditorView: View {
     private func persist() {
         experience.updatedAt = Date()
         guard let settings else { return }
-        do {
-            try WorkspaceSyncService.persistExperience(experience, allExperiences: allExperiences, settings: settings)
-            if let idx = store.experiences.firstIndex(where: { $0.id == experience.id }) {
-                store.experiences[idx] = experience
+        // Update the in-memory store synchronously, then write to disk off the main thread.
+        if let idx = store.experiences.firstIndex(where: { $0.id == experience.id }) {
+            store.experiences[idx] = experience
+        }
+        guard let root = try? WorkspaceService.workspaceURL(settings: settings) else { return }
+        let snapshot = experience
+        let all = allExperiences
+        Task.detached(priority: .utility) {
+            do {
+                try WorkspaceSyncService.writeExperienceFiles(snapshot, allExperiences: all, root: root)
+            } catch {
+                print("ApplyKit experience persistence failed: \(error.localizedDescription)")
             }
-        } catch { print("ApplyKit experience persistence failed: \(error.localizedDescription)") }
+        }
     }
 
     private var editorHeader: some View {

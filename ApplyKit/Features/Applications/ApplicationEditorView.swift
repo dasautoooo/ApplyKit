@@ -22,10 +22,8 @@ struct ApplicationEditorView: View {
     @State var curatedSuggestions: [CuratedBulletSuggestion] = []
 
     @State var generatingDocumentKind: GeneratedDocumentKind?
-    @State private var activeSection: EditorSection = .roleDetails
-    /// Suppresses scroll-position tracking while a rail click animates, so the programmatic
-    /// scroll isn't perturbed by `onPreferenceChange` firing mid-animation.
-    @State private var isAutoScrolling = false
+    @State private var scrollModel = EditorScrollModel()
+    @State private var saveDebouncer = Debouncer()
 
     private let scrollSpace = "applicationEditorScroll"
 
@@ -43,20 +41,20 @@ struct ApplicationEditorView: View {
     var body: some View {
         ScrollViewReader { proxy in
             HStack(alignment: .top, spacing: 0) {
-                EditorSectionRail(active: activeSection) { section in
-                    isAutoScrolling = true
-                    activeSection = section
+                EditorSectionRail(model: scrollModel) { section in
+                    scrollModel.isAutoScrolling = true
+                    scrollModel.active = section
                     withAnimation(.easeInOut(duration: 0.25)) {
                         proxy.scrollTo(section, anchor: .top)
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        isAutoScrolling = false
+                        scrollModel.isAutoScrolling = false
                     }
                 }
                 .padding(.top, 24)
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
+                    LazyVStack(alignment: .leading, spacing: 18) {
                         header
                             .editorSection(.roleDetails, space: scrollSpace)
                         DetailPanel("Role Details") {
@@ -98,19 +96,22 @@ struct ApplicationEditorView: View {
             curatedSuggestions = decodeCuratedSuggestions(newValue)
         }
         .onChange(of: applicationPersistenceFingerprint) { _, _ in
-            persistApplicationChanges()
+            saveDebouncer.schedule { persistApplicationChanges() }
+        }
+        .onDisappear {
+            saveDebouncer.flush { persistApplicationChanges() }
         }
     }
 
     /// Highlights the lowest section whose top has scrolled to/above the viewport top.
     private func updateActiveSection(_ offsets: [EditorSection: CGFloat]) {
-        guard !isAutoScrolling, !offsets.isEmpty else { return }
+        guard !scrollModel.isAutoScrolling, !offsets.isEmpty else { return }
         let threshold: CGFloat = 40
         let passed = offsets.filter { $0.value <= threshold }
         let next = passed.max(by: { $0.value < $1.value })?.key
             ?? offsets.min(by: { $0.value < $1.value })?.key
-        if let next, next != activeSection {
-            activeSection = next
+        if let next, next != scrollModel.active {
+            scrollModel.active = next
         }
     }
 }

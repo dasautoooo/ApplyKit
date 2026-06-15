@@ -715,8 +715,9 @@ struct JDAnalysisView: View {
     let text: String
 
     var body: some View {
+        let sections = parsedSections
         VStack(alignment: .leading, spacing: 20) {
-            ForEach(Array(parsedSections.enumerated()), id: \.offset) { index, section in
+            ForEach(Array(sections.enumerated()), id: \.offset) { index, section in
                 VStack(alignment: .leading, spacing: 8) {
                     if !section.title.isEmpty {
                         Text(section.title)
@@ -771,7 +772,7 @@ struct JDAnalysisView: View {
                     }
                 }
 
-                if index < parsedSections.count - 1 {
+                if index < sections.count - 1 {
                     Divider()
                 }
             }
