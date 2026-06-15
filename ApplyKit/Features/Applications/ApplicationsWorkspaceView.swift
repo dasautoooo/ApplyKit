@@ -50,6 +50,12 @@ struct ApplicationsWorkspaceView: View {
                                 }
                             }
 
+                            Button {
+                                duplicate(application)
+                            } label: {
+                                Label("Duplicate Role", systemImage: "plus.square.on.square")
+                            }
+
                             Divider()
 
                             Button(role: .destructive) {
@@ -218,6 +224,25 @@ struct ApplicationsWorkspaceView: View {
         store.applications.insert(application, at: 0)
         persist(application)
         selectedApplicationID = application.id
+    }
+
+    private func duplicate(_ application: JobApplication) {
+        var copy = application
+        copy.id = UUID()
+        copy.jobTitle = application.jobTitle.trimmed.isEmpty
+            ? "New Role (Copy)"
+            : "\(application.jobTitle) (Copy)"
+        // Fresh start: reset progress/status, keep all content.
+        copy.statusRaw = ApplicationStatus.saved.rawValue
+        copy.dateApplied = nil
+        copy.deadline = nil
+        copy.archivedAt = nil
+        copy.dateSaved = Date()
+        copy.createdAt = Date()
+        copy.updatedAt = Date()
+        store.applications.insert(copy, at: 0)
+        persist(copy)
+        selectedApplicationID = copy.id
     }
 
     private func requestDeleteApplications(offsets: IndexSet) {
