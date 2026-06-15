@@ -23,13 +23,19 @@ extension ApplicationEditorView {
                 Spacer(minLength: 16)
 
                 HStack(spacing: 8) {
-                    Button {
-                        let pb = NSPasteboard.general
-                        pb.clearContents()
-                        pb.setString(applicationContextText, forType: .string)
+                    Menu {
+                        Button {
+                            copyContext(includeAnalysis: false)
+                        } label: {
+                            Label("Copy without JD Analysis", systemImage: "doc.on.clipboard")
+                        }
                     } label: {
                         Label("Copy Context", systemImage: "doc.on.clipboard")
+                    } primaryAction: {
+                        copyContext(includeAnalysis: true)
                     }
+                    .menuStyle(.button)
+                    .fixedSize()
                     .help("Copy all application info as a prompt you can paste into ChatGPT or Claude")
 
                     if application.isArchived {
@@ -154,7 +160,13 @@ extension ApplicationEditorView {
         }
     }
 
-    var applicationContextText: String {
+    func copyContext(includeAnalysis: Bool) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(applicationContextText(includeAnalysis: includeAnalysis), forType: .string)
+    }
+
+    func applicationContextText(includeAnalysis: Bool) -> String {
         let profile = store.profile
         let fmt = DateFormatter()
         fmt.dateStyle = .medium
@@ -164,9 +176,6 @@ extension ApplicationEditorView {
         func field(_ label: String, _ value: String) -> String {
             value.trimmed.isEmpty ? "" : "\(label): \(value)"
         }
-
-        let selectedIDs = application.selectedExperienceIDs.union(application.selectedProjectIDs)
-        let selectedExperiences = experiences.filter { selectedIDs.contains($0.id) }
 
         let profileSection = """
         ## My Profile
@@ -200,52 +209,48 @@ extension ApplicationEditorView {
            "Cover letter needed: \(application.coverLetterNeeded ? "Yes" : "No")"].filter { !$0.isEmpty }.joined(separator: "\n"))
         """
 
-        let employmentSection: String = {
-            if employments.isEmpty { return "" }
-            let lines = employments.map { emp in
-                var line = "- \(emp.companyName), \(emp.role)"
-                let range = emp.dateRangeText()
-                if !range.isEmpty { line += " (\(range))" }
-                if !emp.location.trimmed.isEmpty { line += " — \(emp.location)" }
-                if let override = application.roleDescription(for: emp.id) {
-                    if !emp.roleDescription.trimmed.isEmpty {
-                        line += "\n  Role description (default): \(emp.roleDescription)"
-                    }
-                    line += "\n  Role description (override for this application): \(override)"
-                } else if !emp.roleDescription.trimmed.isEmpty {
-                    line += "\n  Role description: \(emp.roleDescription)"
-                }
-                return line
-            }.joined(separator: "\n")
-            return "## Employment History\n\(lines)"
-        }()
-
+        // Resume-style experience: bullets grouped by employment (then unassigned, then
+        // projects) and ordered exactly as in the editor, via the shared `wordingGroups`.
         let experienceSection: String = {
-            if selectedExperiences.isEmpty { return "## Selected Experience\nNone selected." }
-            let lines = selectedExperiences.map { exp in
-                let variantID = application.selectedVariantID(for: exp.id)
-                let bullet = exp.bulletText(variantID: variantID)
-                var parts = ["- \(bullet)"]
-                let meta = [exp.company, exp.role, exp.projectName].filter { !$0.trimmed.isEmpty }.joined(separator: " / ")
-                if !meta.isEmpty { parts.append("  Source: \(meta)") }
-                if !exp.skillsText.trimmed.isEmpty { parts.append("  Skills: \(exp.skillsText)") }
-                return parts.joined(separator: "\n")
+            let groups = wordingGroups.filter { !$0.bullets.isEmpty }
+            if groups.isEmpty { return "## Experience\nNone selected." }
+            let blocks = groups.map { group -> String in
+                var lines: [String] = []
+                if let emp = group.employment {
+                    lines.append("### \(emp.summaryLine)")
+                    if !emp.location.trimmed.isEmpty { lines.append("Location: \(emp.location)") }
+                    if let override = application.roleDescription(for: emp.id) {
+                        if !emp.roleDescription.trimmed.isEmpty {
+                            lines.append("Role description (default): \(emp.roleDescription)")
+                        }
+                        lines.append("Role description (override for this application): \(override)")
+                    } else if !emp.roleDescription.trimmed.isEmpty {
+                        lines.append("Role description: \(emp.roleDescription)")
+                    }
+                } else {
+                    lines.append("### \(group.title)")
+                }
+                for exp in group.bullets {
+                    let bullet = exp.bulletText(variantID: application.selectedVariantID(for: exp.id))
+                    lines.append("- \(bullet)")
+                    if !exp.skillsText.trimmed.isEmpty { lines.append("  Skills: \(exp.skillsText)") }
+                }
+                return lines.joined(separator: "\n")
             }.joined(separator: "\n\n")
-            return "## Selected Experience (\(selectedExperiences.count) bullet\(selectedExperiences.count == 1 ? "" : "s"))\n\(lines)"
+            return "## Experience\n\(blocks)"
         }()
 
         var parts: [String] = [
             "# Application Context: \(application.displayTitle)",
-            profileSection,
             appSection,
         ]
-        if !employmentSection.isEmpty { parts.append(employmentSection) }
         if !application.jobDescription.trimmed.isEmpty {
             parts.append("## Job Description\n\(application.jobDescription)")
         }
-        if !application.jdAnalysisText.trimmed.isEmpty {
+        if includeAnalysis, !application.jdAnalysisText.trimmed.isEmpty {
             parts.append("## JD Analysis\n\(application.jdAnalysisText)")
         }
+        parts.append(profileSection)
         parts.append(experienceSection)
         if !application.notes.trimmed.isEmpty {
             parts.append("## Notes\n\(application.notes)")
