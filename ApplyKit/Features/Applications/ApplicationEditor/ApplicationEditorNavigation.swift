@@ -21,6 +21,8 @@ enum EditorSection: Int, CaseIterable, Identifiable {
     case documents
     case experience
     case tailorExperience
+    case summary
+    case skills
     case jobDescription
     case jdAnalysis
     case gapSuggestions
@@ -34,6 +36,8 @@ enum EditorSection: Int, CaseIterable, Identifiable {
         case .documents: "Documents"
         case .experience: "Experience"
         case .tailorExperience: "Tailor Experience"
+        case .summary: "Summary"
+        case .skills: "Skills"
         case .jobDescription: "Job Description"
         case .jdAnalysis: "JD Analysis"
         case .gapSuggestions: "Gap Suggestions"
@@ -47,6 +51,8 @@ enum EditorSection: Int, CaseIterable, Identifiable {
         case .documents: "doc.on.doc"
         case .experience: "checklist"
         case .tailorExperience: "slider.horizontal.3"
+        case .summary: "text.quote"
+        case .skills: "wrench.and.screwdriver"
         case .jobDescription: "text.alignleft"
         case .jdAnalysis: "brain"
         case .gapSuggestions: "sparkles"

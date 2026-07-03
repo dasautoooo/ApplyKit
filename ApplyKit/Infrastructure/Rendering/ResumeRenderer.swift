@@ -3,13 +3,16 @@ import Foundation
 enum ResumeRenderer {
     static let experiencePlaceholder = "{{APPLYKIT_EXPERIENCE}}"
     static let projectsPlaceholder = "{{APPLYKIT_PROJECTS}}"
+    static let skillsPlaceholder = "{{APPLYKIT_SKILLS}}"
+    static let summaryPlaceholder = "{{APPLYKIT_SUMMARY}}"
 
     struct RenderResult { let rendered: String; let warnings: [String] }
 
     static func render(template: String, variantSelections: [UUID: UUID],
                        selectedExperiences: [ExperienceBullet], selectedProjects: [ExperienceBullet],
                        employments: [Employment], roleDescriptionOverrides: [UUID: String] = [:],
-                       experienceOrder: [UUID] = []) -> RenderResult {
+                       experienceOrder: [UUID] = [],
+                       skillsBlock: String = "", summary: String = "") -> RenderResult {
         let orderIndex = Dictionary(uniqueKeysWithValues: experienceOrder.enumerated().map { ($0.element, $0.offset) })
         let experience = experienceBlock(selectedExperiences: selectedExperiences,
                                          variantSelections: variantSelections, employments: employments,
@@ -19,7 +22,22 @@ enum ResumeRenderer {
         let rendered = template
             .replacingOccurrences(of: experiencePlaceholder, with: experience.block)
             .replacingOccurrences(of: projectsPlaceholder, with: projects.block)
+            .replacingOccurrences(of: skillsPlaceholder, with: skillsBlock)
+            .replacingOccurrences(of: summaryPlaceholder, with: summarySection(summary))
         return RenderResult(rendered: rendered, warnings: experience.warnings + projects.warnings)
+    }
+
+    /// Wrap the summary in its own `rSection`, or return empty so the section is omitted
+    /// entirely when the application has no summary.
+    static func summarySection(_ summary: String) -> String {
+        guard !summary.trimmed.isEmpty else { return "" }
+        return """
+        \\begin{rSection}{Summary}
+
+        \(summary)
+
+        \\end{rSection}
+        """
     }
 
     static func experienceBlock(selectedExperiences: [ExperienceBullet], variantSelections: [UUID: UUID],

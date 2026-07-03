@@ -270,6 +270,8 @@ extension ApplicationEditorView {
             application.selectedVariantIDsText,
             application.employmentRoleDescriptionsText,
             application.experienceOrderText,
+            application.skillsBlockText,
+            application.summaryText,
             WorkspaceDateCodec.string(from: application.archivedAt) ?? ""
         ].joined(separator: "\u{1F}")
     }

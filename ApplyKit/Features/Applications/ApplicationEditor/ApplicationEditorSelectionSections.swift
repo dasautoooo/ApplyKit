@@ -7,6 +7,65 @@ import AppKit
 import SwiftUI
 
 extension ApplicationEditorView {
+    /// Per-application Summary (optional; omitted from the resume when blank).
+    var summarySection: some View {
+        DetailPanel("Summary") {
+            VStack(alignment: .leading, spacing: 4) {
+                TextEditor(text: $application.summaryText)
+                    .font(.body.monospaced())
+                    .frame(minHeight: 90)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
+                    )
+                Text("Optional — leave blank to omit the summary from this resume.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Per-application Skills override (falls back to the global block when blank).
+    var skillsSection: some View {
+        DetailPanel("Skills", trailing: {
+            Text(application.hasSkillsOverride ? "Custom" : "Default")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(application.hasSkillsOverride ? Color.blue : Color.secondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background((application.hasSkillsOverride ? Color.blue : Color.secondary).opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }) {
+            VStack(alignment: .leading, spacing: 10) {
+                TextEditor(text: $application.skillsBlockText)
+                    .font(.body.monospaced())
+                    .frame(minHeight: 90)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
+                    )
+
+                Text("Leave blank to use the global skills block from Settings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Global default")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(store.profile.skillsBlock.trimmed.isEmpty ? "No global skills block set." : store.profile.skillsBlock)
+                        .font(.body.monospaced())
+                        .foregroundStyle(store.profile.skillsBlock.trimmed.isEmpty ? .secondary : .primary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(9)
+                        .background(Color(nsColor: .textBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                }
+            }
+        }
+    }
+
     var selectedExperienceSection: some View {
         DetailPanel("Experience Source") {
             VStack(alignment: .leading, spacing: 12) {

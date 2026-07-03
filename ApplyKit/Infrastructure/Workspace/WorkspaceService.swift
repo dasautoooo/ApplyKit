@@ -83,7 +83,9 @@ enum WorkspaceService {
                 template: templateText, variantSelections: application.selectedVariantIDs,
                 selectedExperiences: selectedExperiences, selectedProjects: selectedProjects, employments: employments,
                 roleDescriptionOverrides: application.employmentRoleDescriptions,
-                experienceOrder: application.experienceOrder)
+                experienceOrder: application.experienceOrder,
+                skillsBlock: application.effectiveSkillsBlock(default: profile.skillsBlock),
+                summary: application.summaryText)
             warnings = render.warnings
             try profile.applying(to: render.rendered).write(to: texURL, atomically: true, encoding: .utf8)
             try copyResumeClassIfAvailable(templateURL: template, outputFolder: outputFolder)

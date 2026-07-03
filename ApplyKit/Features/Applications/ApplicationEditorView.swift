@@ -69,6 +69,10 @@ struct ApplicationEditorView: View {
                         .editorSection(.experience, space: scrollSpace)
                         selectedBulletWordingSection
                             .editorSection(.tailorExperience, space: scrollSpace)
+                        summarySection
+                            .editorSection(.summary, space: scrollSpace)
+                        skillsSection
+                            .editorSection(.skills, space: scrollSpace)
                         jobDescriptionSection
                             .editorSection(.jobDescription, space: scrollSpace)
                         jdAnalysisSection

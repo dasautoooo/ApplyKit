@@ -27,6 +27,8 @@ struct JobApplication: Identifiable, Codable, Hashable {
     var selectedVariantIDsText: String
     var employmentRoleDescriptionsText: String
     var experienceOrderText: String
+    var skillsBlockText: String
+    var summaryText: String
     var archivedAt: Date?
     var createdAt: Date
     var updatedAt: Date
@@ -61,6 +63,8 @@ struct JobApplication: Identifiable, Codable, Hashable {
         self.selectedVariantIDsText = ""
         self.employmentRoleDescriptionsText = ""
         self.experienceOrderText = ""
+        self.skillsBlockText = ""
+        self.summaryText = ""
         self.archivedAt = nil
         self.createdAt = Date()
         self.updatedAt = Date()
@@ -78,6 +82,17 @@ extension JobApplication {
     }
 
     var isArchived: Bool { archivedAt != nil }
+
+    /// Per-application skills override. When blank, resumes fall back to the global
+    /// `ResumeProfile.skillsBlock`.
+    var hasSkillsOverride: Bool { !skillsBlockText.trimmed.isEmpty }
+
+    func effectiveSkillsBlock(default globalBlock: String) -> String {
+        hasSkillsOverride ? skillsBlockText : globalBlock
+    }
+
+    /// Per-application summary. When blank, the Summary section is omitted entirely.
+    var hasSummary: Bool { !summaryText.trimmed.isEmpty }
 
     var selectedExperienceIDs: Set<UUID> {
         Set(selectedExperienceIDsText.split(separator: ",").compactMap { UUID(uuidString: String($0)) })
