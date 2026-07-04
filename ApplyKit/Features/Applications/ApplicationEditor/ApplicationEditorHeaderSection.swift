@@ -177,19 +177,6 @@ extension ApplicationEditorView {
             value.trimmed.isEmpty ? "" : "\(label): \(value)"
         }
 
-        let profileSection = """
-        ## My Profile
-        \([field("Name", profile.fullName),
-           field("Email", profile.email),
-           field("Phone", profile.phone),
-           field("City", profile.city),
-           field("LinkedIn", profile.linkedin),
-           field("GitHub", profile.github),
-           field("Website", profile.website)].filter { !$0.isEmpty }.joined(separator: "\n"))
-        \(profile.skillsBlock.trimmed.isEmpty ? "" : "\n### Skills\n\(profile.skillsBlock)")
-        \(profile.educationBlock.trimmed.isEmpty ? "" : "\n### Education\n\(profile.educationBlock)")
-        """
-
         let appSection = """
         ## Application Details
         \([field("Company", application.companyName),
@@ -209,35 +196,59 @@ extension ApplicationEditorView {
            "Cover letter needed: \(application.coverLetterNeeded ? "Yes" : "No")"].filter { !$0.isEmpty }.joined(separator: "\n"))
         """
 
-        // Resume-style experience: bullets grouped by employment (then unassigned, then
-        // projects) and ordered exactly as in the editor, via the shared `wordingGroups`.
-        let experienceSection: String = {
-            let groups = wordingGroups.filter { !$0.bullets.isEmpty }
-            if groups.isEmpty { return "## Experience\nNone selected." }
-            let blocks = groups.map { group -> String in
-                var lines: [String] = []
-                if let emp = group.employment {
-                    lines.append("### \(emp.summaryLine)")
-                    if !emp.location.trimmed.isEmpty { lines.append("Location: \(emp.location)") }
-                    if let override = application.roleDescription(for: emp.id) {
-                        if !emp.roleDescription.trimmed.isEmpty {
-                            lines.append("Role description (default): \(emp.roleDescription)")
-                        }
-                        lines.append("Role description (override for this application): \(override)")
-                    } else if !emp.roleDescription.trimmed.isEmpty {
-                        lines.append("Role description: \(emp.roleDescription)")
-                    }
-                } else {
-                    lines.append("### \(group.title)")
-                }
-                for exp in group.bullets {
-                    let bullet = exp.bulletText(variantID: application.selectedVariantID(for: exp.id))
-                    lines.append("- \(bullet)")
-                    if !exp.skillsText.trimmed.isEmpty { lines.append("  Skills: \(exp.skillsText)") }
-                }
-                return lines.joined(separator: "\n")
-            }.joined(separator: "\n\n")
-            return "## Experience\n\(blocks)"
+        // Resume content — mirrors exactly what ResumeRenderer produces for this application:
+        // effective role descriptions + selected-variant bullet text, per-application summary
+        // and skills, in the same section order as the resume template.
+        let resumeSection: String = {
+            var blocks: [String] = []
+
+            // Contact — matches the resume header (name + the two address lines).
+            let contactLines = [
+                field("Name", profile.fullName),
+                [profile.city, profile.phone, profile.email].filter { !$0.trimmed.isEmpty }.joined(separator: " | "),
+                [profile.linkedin, profile.github, profile.website].filter { !$0.trimmed.isEmpty }.joined(separator: " | ")
+            ].filter { !$0.trimmed.isEmpty }
+            if !contactLines.isEmpty { blocks.append("### Contact\n\(contactLines.joined(separator: "\n"))") }
+
+            // Summary (per-application; omitted when blank, like the resume).
+            if application.hasSummary { blocks.append("### Summary\n\(application.summaryText)") }
+
+            // Education.
+            if !profile.educationBlock.trimmed.isEmpty { blocks.append("### Education\n\(profile.educationBlock)") }
+
+            // Experience — grouped by employment; skip unassigned/orphan bullets (not on the resume).
+            let experienceGroups = wordingGroups.filter { !$0.isProject && $0.employment != nil && !$0.bullets.isEmpty }
+            if !experienceGroups.isEmpty {
+                let body = experienceGroups.map { group -> String in
+                    let emp = group.employment!
+                    let header = emp.location.trimmed.isEmpty ? emp.summaryLine : "\(emp.summaryLine), \(emp.location)"
+                    var lines = ["#### \(header)"]
+                    let role = application.roleDescription(for: emp.id) ?? emp.roleDescription
+                    if !role.trimmed.isEmpty { lines.append("- \(role)") }
+                    lines += group.bullets.map { "- \($0.bulletText(variantID: application.selectedVariantID(for: $0.id)))" }
+                    return lines.joined(separator: "\n")
+                }.joined(separator: "\n\n")
+                blocks.append("### Experience\n\(body)")
+            }
+
+            // Selected Projects — each project as its own titled entry (mirrors ResumeRenderer.projectBlock).
+            let projects = wordingGroups.filter(\.isProject).flatMap(\.bullets)
+            if !projects.isEmpty {
+                let body = projects.map { proj -> String in
+                    let title = proj.resumeDisplayName.trimmed.isEmpty ? proj.displayTitle : proj.resumeDisplayName
+                    let bulletLines = proj.bulletText(variantID: application.selectedVariantID(for: proj.id))
+                        .split(separator: "\n").map { String($0).trimmed }.filter { !$0.isEmpty }
+                        .map { "- \($0)" }.joined(separator: "\n")
+                    return bulletLines.isEmpty ? "#### \(title)" : "#### \(title)\n\(bulletLines)"
+                }.joined(separator: "\n\n")
+                blocks.append("### Selected Projects\n\(body)")
+            }
+
+            // Skills — effective per-application value (override else global).
+            let skills = application.effectiveSkillsBlock(default: profile.skillsBlock)
+            if !skills.trimmed.isEmpty { blocks.append("### Skills\n\(skills)") }
+
+            return "## Resume\n\(blocks.joined(separator: "\n\n"))"
         }()
 
         var parts: [String] = [
@@ -250,11 +261,10 @@ extension ApplicationEditorView {
         if includeAnalysis, !application.jdAnalysisText.trimmed.isEmpty {
             parts.append("## JD Analysis\n\(application.jdAnalysisText)")
         }
-        parts.append(profileSection)
-        parts.append(experienceSection)
         if !application.notes.trimmed.isEmpty {
             parts.append("## Notes\n\(application.notes)")
         }
+        parts.append(resumeSection)
 
         return parts.joined(separator: "\n\n---\n\n")
     }
