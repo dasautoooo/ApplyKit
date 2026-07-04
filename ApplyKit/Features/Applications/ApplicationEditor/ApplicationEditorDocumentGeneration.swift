@@ -103,14 +103,50 @@ extension ApplicationEditorView {
                     settings: settings
                 )
             }
-            let base = replacingExisting ? "\(kind.rawValue) regenerated." : "\(kind.rawValue) generated."
-            let msg = result.warnings.isEmpty ? base : base + " " + result.warnings.joined(separator: " ")
+
+            // One-step flow: build the PDF right after rendering, then open it.
+            let built = await buildPDF(persistedDoc, allDocuments: allDocuments, settings: settings)
+            if let idx = store.documents.firstIndex(where: { $0.id == built.id }) {
+                store.documents[idx] = built
+            }
             generatingDocumentKind = nil
-            activityMonitor.succeed(msg)
+
+            let base = replacingExisting ? "\(kind.rawValue) regenerated." : "\(kind.rawValue) generated."
+            if built.statusRaw == GeneratedDocumentStatus.built.rawValue {
+                FileOpenService.open(path: built.pdfPath)
+                let msg = result.warnings.isEmpty ? base : base + " " + result.warnings.joined(separator: " ")
+                activityMonitor.succeed(msg)
+            } else {
+                activityMonitor.fail("\(kind.rawValue) built with errors — see the build log.")
+            }
         } catch {
             generatingDocumentKind = nil
             activityMonitor.fail(error.localizedDescription)
         }
+    }
+
+    /// Runs the LaTeX build for a freshly-rendered document and persists the resulting
+    /// status/log. A build failure is reflected in the returned document (never thrown),
+    /// so the `.tex` and build log remain available for debugging.
+    private func buildPDF(_ document: GeneratedDocument,
+                          allDocuments: [GeneratedDocument],
+                          settings: AppSettings) async -> GeneratedDocument {
+        var updated = document
+        do {
+            let result = try await LatexService.build(texPath: document.texPath, command: settings.latexBuildCommand)
+            updated.lastBuildLog = result.combinedOutput
+            updated.statusRaw = result.succeeded ? GeneratedDocumentStatus.built.rawValue
+                                                 : GeneratedDocumentStatus.failed.rawValue
+        } catch {
+            updated.lastBuildLog = error.localizedDescription
+            updated.statusRaw = GeneratedDocumentStatus.failed.rawValue
+        }
+        updated.updatedAt = Date()
+        if let persisted = try? WorkspaceSyncService.persistGeneratedDocument(
+            updated, application: application, allDocuments: allDocuments, settings: settings) {
+            return persisted
+        }
+        return updated
     }
 
     func hasGeneratedDocument(_ kind: GeneratedDocumentKind) -> Bool {

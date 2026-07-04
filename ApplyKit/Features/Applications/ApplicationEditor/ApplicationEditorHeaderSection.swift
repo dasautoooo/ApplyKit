@@ -291,7 +291,8 @@ extension ApplicationEditorView {
                         document: document,
                         application: application,
                         allDocuments: documents,
-                        settings: settings
+                        settings: settings,
+                        onRebuild: { kind in await generateDocument(kind, replacingExisting: true) }
                     )
                 }
             }

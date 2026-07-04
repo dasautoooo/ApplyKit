@@ -399,13 +399,18 @@ struct SelectionToggleRow: View {
 }
 
 struct DocumentRow: View {
-    @Environment(AppDataStore.self) private var store
     let document: GeneratedDocument
     let application: JobApplication
     let allDocuments: [GeneratedDocument]
     let settings: AppSettings?
+    /// Re-renders the `.tex` from the current application and rebuilds the PDF.
+    let onRebuild: (GeneratedDocumentKind) async -> Void
 
     @State private var isBuilding = false
+
+    private var kind: GeneratedDocumentKind {
+        GeneratedDocumentKind(rawValue: document.kindRaw) ?? .resume
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -427,13 +432,18 @@ struct DocumentRow: View {
                 }
                 .controlSize(.small)
                 Button {
-                    FileOpenService.reveal(path: document.texPath)
+                    FileOpenService.reveal(path: document.pdfPath)
                 } label: {
                     Label("Reveal", systemImage: "folder")
                 }
+                .disabled(!FileManager.default.fileExists(atPath: document.pdfPath))
                 .controlSize(.small)
                 Button {
-                    build()
+                    isBuilding = true
+                    Task {
+                        await onRebuild(kind)
+                        isBuilding = false
+                    }
                 } label: {
                     Label("Build PDF", systemImage: "hammer")
                 }
@@ -479,42 +489,6 @@ struct DocumentRow: View {
         }
     }
 
-    private func build() {
-        guard let settings else { return }
-        isBuilding = true
-        Task {
-            var updatedDoc = document
-            do {
-                let result = try await LatexService.build(texPath: document.texPath, command: settings.latexBuildCommand)
-                updatedDoc.lastBuildLog = result.combinedOutput
-                updatedDoc.statusRaw = result.succeeded ? GeneratedDocumentStatus.built.rawValue : GeneratedDocumentStatus.failed.rawValue
-                updatedDoc.updatedAt = Date()
-                let persisted = try WorkspaceSyncService.persistGeneratedDocument(
-                    updatedDoc,
-                    application: application,
-                    allDocuments: allDocuments,
-                    settings: settings
-                )
-                if let idx = store.documents.firstIndex(where: { $0.id == persisted.id }) {
-                    store.documents[idx] = persisted
-                }
-            } catch {
-                updatedDoc.lastBuildLog = error.localizedDescription
-                updatedDoc.statusRaw = GeneratedDocumentStatus.failed.rawValue
-                if let persisted = try? WorkspaceSyncService.persistGeneratedDocument(
-                    updatedDoc,
-                    application: application,
-                    allDocuments: allDocuments,
-                    settings: settings
-                ) {
-                    if let idx = store.documents.firstIndex(where: { $0.id == persisted.id }) {
-                        store.documents[idx] = persisted
-                    }
-                }
-            }
-            isBuilding = false
-        }
-    }
 }
 
 struct CuratedBulletCard: View {
