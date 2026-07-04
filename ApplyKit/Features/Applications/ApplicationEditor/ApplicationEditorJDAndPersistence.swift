@@ -289,6 +289,9 @@ extension ApplicationEditorView {
         // reflect the edit immediately...
         let docs = store.documents.filter { $0.applicationID == target.id }
         if let idx = store.applications.firstIndex(where: { $0.id == target.id }) {
+            // Archive state is owned by the applications list (archive/restore), not the
+            // editor snapshot; preserve it so a stale snapshot can't revert an archive.
+            target.archivedAt = store.applications[idx].archivedAt
             store.applications[idx] = target
         }
         if target.id == application.id {
