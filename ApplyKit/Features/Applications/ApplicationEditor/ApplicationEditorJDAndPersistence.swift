@@ -270,6 +270,7 @@ extension ApplicationEditorView {
             application.selectedVariantIDsText,
             application.employmentRoleDescriptionsText,
             application.experienceOrderText,
+            application.sectionOrderText,
             application.skillsBlockText,
             application.summaryText,
             WorkspaceDateCodec.string(from: application.archivedAt) ?? ""

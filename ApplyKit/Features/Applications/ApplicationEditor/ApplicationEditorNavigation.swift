@@ -19,6 +19,7 @@ import SwiftUI
 enum EditorSection: Int, CaseIterable, Identifiable {
     case roleDetails
     case documents
+    case sectionOrder
     case experience
     case tailorExperience
     case summary
@@ -34,6 +35,7 @@ enum EditorSection: Int, CaseIterable, Identifiable {
         switch self {
         case .roleDetails: "Role Details"
         case .documents: "Documents"
+        case .sectionOrder: "Section Order"
         case .experience: "Experience"
         case .tailorExperience: "Tailor Experience"
         case .summary: "Summary"
@@ -49,6 +51,7 @@ enum EditorSection: Int, CaseIterable, Identifiable {
         switch self {
         case .roleDetails: "briefcase"
         case .documents: "doc.on.doc"
+        case .sectionOrder: "arrow.up.arrow.down"
         case .experience: "checklist"
         case .tailorExperience: "slider.horizontal.3"
         case .summary: "text.quote"

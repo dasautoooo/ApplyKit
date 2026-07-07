@@ -403,7 +403,7 @@ struct DocumentRow: View {
     let application: JobApplication
     let allDocuments: [GeneratedDocument]
     let settings: AppSettings?
-    /// Re-renders the `.tex` from the current application and rebuilds the PDF.
+    /// Compiles the existing `.tex` as-is (no re-render), preserving manual edits.
     let onRebuild: (GeneratedDocumentKind) async -> Void
 
     @State private var isBuilding = false

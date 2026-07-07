@@ -101,6 +101,16 @@ enum GeneratedDocumentStatus: String, StoredStringEnum {
     case final = "Final"
 }
 
+enum ResumeSectionKind: String, StoredStringEnum {
+    case summary = "Summary"
+    case education = "Education"
+    case experience = "Experience"
+    case projects = "Selected Projects"
+    case skills = "Skills"
+
+    static let defaultOrder: [ResumeSectionKind] = [.summary, .education, .experience, .projects, .skills]
+}
+
 enum PromptPurpose: String, StoredStringEnum {
     case analyzeJob = "Analyze Job"
     case tailorResume = "Tailor Resume"

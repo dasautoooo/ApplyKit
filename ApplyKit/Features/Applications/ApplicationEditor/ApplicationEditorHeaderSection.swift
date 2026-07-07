@@ -210,11 +210,15 @@ extension ApplicationEditorView {
             ].filter { !$0.trimmed.isEmpty }
             if !contactLines.isEmpty { blocks.append("### Contact\n\(contactLines.joined(separator: "\n"))") }
 
+            // The remaining sections are keyed by kind so they can be joined in the
+            // application's configured resume section order (see `sectionOrderSection`).
+            var sectionBlocks: [ResumeSectionKind: String] = [:]
+
             // Summary (per-application; omitted when blank, like the resume).
-            if application.hasSummary { blocks.append("### Summary\n\(application.summaryText)") }
+            if application.hasSummary { sectionBlocks[.summary] = "### Summary\n\(application.summaryText)" }
 
             // Education.
-            if !profile.educationBlock.trimmed.isEmpty { blocks.append("### Education\n\(profile.educationBlock)") }
+            if !profile.educationBlock.trimmed.isEmpty { sectionBlocks[.education] = "### Education\n\(profile.educationBlock)" }
 
             // Experience — grouped by employment; skip unassigned/orphan bullets (not on the resume).
             let experienceGroups = wordingGroups.filter { !$0.isProject && $0.employment != nil && !$0.bullets.isEmpty }
@@ -228,7 +232,7 @@ extension ApplicationEditorView {
                     lines += group.bullets.map { "- \($0.bulletText(variantID: application.selectedVariantID(for: $0.id)))" }
                     return lines.joined(separator: "\n")
                 }.joined(separator: "\n\n")
-                blocks.append("### Experience\n\(body)")
+                sectionBlocks[.experience] = "### Experience\n\(body)"
             }
 
             // Selected Projects — each project as its own titled entry (mirrors ResumeRenderer.projectBlock).
@@ -241,12 +245,14 @@ extension ApplicationEditorView {
                         .map { "- \($0)" }.joined(separator: "\n")
                     return bulletLines.isEmpty ? "#### \(title)" : "#### \(title)\n\(bulletLines)"
                 }.joined(separator: "\n\n")
-                blocks.append("### Selected Projects\n\(body)")
+                sectionBlocks[.projects] = "### Selected Projects\n\(body)"
             }
 
             // Skills — effective per-application value (override else global).
             let skills = application.effectiveSkillsBlock(default: profile.skillsBlock)
-            if !skills.trimmed.isEmpty { blocks.append("### Skills\n\(skills)") }
+            if !skills.trimmed.isEmpty { sectionBlocks[.skills] = "### Skills\n\(skills)" }
+
+            blocks += application.sectionOrder.compactMap { sectionBlocks[$0] }
 
             return "## Resume\n\(blocks.joined(separator: "\n\n"))"
         }()
@@ -302,7 +308,7 @@ extension ApplicationEditorView {
                         application: application,
                         allDocuments: documents,
                         settings: settings,
-                        onRebuild: { kind in await generateDocument(kind, replacingExisting: true) }
+                        onRebuild: { _ in await rebuildDocument(document, allDocuments: documents) }
                     )
                 }
             }

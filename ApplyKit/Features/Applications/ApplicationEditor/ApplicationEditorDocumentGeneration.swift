@@ -125,6 +125,26 @@ extension ApplicationEditorView {
         }
     }
 
+    /// Compiles the document's existing `.tex` file as-is (no re-render), so manual edits
+    /// to the LaTeX are preserved. Used by the per-document "Build PDF" action.
+    func rebuildDocument(_ document: GeneratedDocument, allDocuments: [GeneratedDocument]) async {
+        guard let settings else {
+            activityMonitor.fail("Open Settings and choose a workspace before building.")
+            return
+        }
+        activityMonitor.start("Building \(document.kindRaw)…")
+        let built = await buildPDF(document, allDocuments: allDocuments, settings: settings)
+        if let idx = store.documents.firstIndex(where: { $0.id == built.id }) {
+            store.documents[idx] = built
+        }
+        if built.statusRaw == GeneratedDocumentStatus.built.rawValue {
+            FileOpenService.open(path: built.pdfPath)
+            activityMonitor.succeed("\(document.kindRaw) built.")
+        } else {
+            activityMonitor.fail("\(document.kindRaw) built with errors — see the build log.")
+        }
+    }
+
     /// Runs the LaTeX build for a freshly-rendered document and persists the resulting
     /// status/log. A build failure is reflected in the returned document (never thrown),
     /// so the `.tex` and build log remain available for debugging.

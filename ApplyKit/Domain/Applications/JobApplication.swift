@@ -27,6 +27,7 @@ struct JobApplication: Identifiable, Codable, Hashable {
     var selectedVariantIDsText: String
     var employmentRoleDescriptionsText: String
     var experienceOrderText: String
+    var sectionOrderText: String
     var skillsBlockText: String
     var summaryText: String
     var archivedAt: Date?
@@ -63,6 +64,7 @@ struct JobApplication: Identifiable, Codable, Hashable {
         self.selectedVariantIDsText = ""
         self.employmentRoleDescriptionsText = ""
         self.experienceOrderText = ""
+        self.sectionOrderText = ""
         self.skillsBlockText = ""
         self.summaryText = ""
         self.archivedAt = nil
@@ -214,5 +216,19 @@ extension JobApplication {
             let ri = index[rhs.id] ?? Int.max
             return li != ri ? li < ri : lhs.createdAt < rhs.createdAt
         }
+    }
+
+    /// Per-application resume section order. Always returns every `ResumeSectionKind`,
+    /// appending any kind missing from the stored order (e.g. unset, or a newly added
+    /// kind) in the default order.
+    var sectionOrder: [ResumeSectionKind] {
+        let stored = sectionOrderText.split(separator: ",").compactMap { ResumeSectionKind(rawValue: String($0)) }
+        let missing = ResumeSectionKind.defaultOrder.filter { !stored.contains($0) }
+        return stored + missing
+    }
+
+    mutating func setSectionOrder(_ order: [ResumeSectionKind]) {
+        sectionOrderText = order.map(\.rawValue).joined(separator: ",")
+        updatedAt = Date()
     }
 }

@@ -1,10 +1,7 @@
 import Foundation
 
 enum ResumeRenderer {
-    static let experiencePlaceholder = "{{APPLYKIT_EXPERIENCE}}"
-    static let projectsPlaceholder = "{{APPLYKIT_PROJECTS}}"
-    static let skillsPlaceholder = "{{APPLYKIT_SKILLS}}"
-    static let summaryPlaceholder = "{{APPLYKIT_SUMMARY}}"
+    static let sectionsPlaceholder = "{{APPLYKIT_SECTIONS}}"
 
     struct RenderResult { let rendered: String; let warnings: [String] }
 
@@ -12,18 +9,26 @@ enum ResumeRenderer {
                        selectedExperiences: [ExperienceBullet], selectedProjects: [ExperienceBullet],
                        employments: [Employment], roleDescriptionOverrides: [UUID: String] = [:],
                        experienceOrder: [UUID] = [],
-                       skillsBlock: String = "", summary: String = "") -> RenderResult {
+                       educationBlock: String = "", skillsBlock: String = "", summary: String = "",
+                       sectionOrder: [ResumeSectionKind] = ResumeSectionKind.defaultOrder) -> RenderResult {
         let orderIndex = Dictionary(uniqueKeysWithValues: experienceOrder.enumerated().map { ($0.element, $0.offset) })
         let experience = experienceBlock(selectedExperiences: selectedExperiences,
                                          variantSelections: variantSelections, employments: employments,
                                          roleDescriptionOverrides: roleDescriptionOverrides, orderIndex: orderIndex)
         let projects = projectBlock(selectedProjects: selectedProjects,
                                      variantSelections: variantSelections, employments: employments, orderIndex: orderIndex)
-        let rendered = template
-            .replacingOccurrences(of: experiencePlaceholder, with: experience.block)
-            .replacingOccurrences(of: projectsPlaceholder, with: projects.block)
-            .replacingOccurrences(of: skillsPlaceholder, with: skillsBlock)
-            .replacingOccurrences(of: summaryPlaceholder, with: summarySection(summary))
+        let sectionBlocks: [ResumeSectionKind: String] = [
+            .summary: summarySection(summary),
+            .education: wrappedSection(title: "Education", content: educationBlock),
+            .experience: wrappedSection(title: "Experience", content: experience.block),
+            .projects: wrappedSection(title: "Selected Projects", content: projects.block),
+            .skills: wrappedSection(title: "Skills", content: skillsBlock)
+        ]
+        let sectionsText = sectionOrder
+            .compactMap { sectionBlocks[$0] }
+            .filter { !$0.trimmed.isEmpty }
+            .joined(separator: "\n\n")
+        let rendered = template.replacingOccurrences(of: sectionsPlaceholder, with: sectionsText)
         return RenderResult(rendered: rendered, warnings: experience.warnings + projects.warnings)
     }
 
@@ -31,10 +36,14 @@ enum ResumeRenderer {
     /// entirely when the application has no summary.
     static func summarySection(_ summary: String) -> String {
         guard !summary.trimmed.isEmpty else { return "" }
-        return """
-        \\begin{rSection}{Summary}
+        return wrappedSection(title: "Summary", content: summary)
+    }
 
-        \(summary)
+    private static func wrappedSection(title: String, content: String) -> String {
+        """
+        \\begin{rSection}{\(title)}
+
+        \(content)
 
         \\end{rSection}
         """

@@ -66,6 +66,56 @@ extension ApplicationEditorView {
         }
     }
 
+    /// Per-application resume section ordering (Summary, Education, Experience,
+    /// Selected Projects, Skills). Mirrors the up/down chevron reorder pattern used for
+    /// experience bullets in `ApplicationExperienceWordingRow`.
+    var sectionOrderSection: some View {
+        DetailPanel("Section Order") {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(application.sectionOrder.enumerated()), id: \.element) { index, section in
+                    HStack {
+                        Text(section.rawValue)
+                            .font(.callout)
+                        Spacer()
+                        HStack(spacing: 4) {
+                            Button {
+                                moveSectionOrder(from: index, to: index - 1)
+                            } label: {
+                                Image(systemName: "chevron.up")
+                            }
+                            .disabled(index == 0)
+                            .help("Move up")
+
+                            Button {
+                                moveSectionOrder(from: index, to: index + 1)
+                            } label: {
+                                Image(systemName: "chevron.down")
+                            }
+                            .disabled(index == application.sectionOrder.count - 1)
+                            .help("Move down")
+                        }
+                        .controlSize(.small)
+                    }
+                    .padding(.vertical, 5)
+                    if index < application.sectionOrder.count - 1 {
+                        Divider()
+                    }
+                }
+                Text("Controls the order sections appear in the generated resume.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
+            }
+        }
+    }
+
+    private func moveSectionOrder(from: Int, to: Int) {
+        var order = application.sectionOrder
+        guard order.indices.contains(to) else { return }
+        order.swapAt(from, to)
+        application.setSectionOrder(order)
+    }
+
     var selectedExperienceSection: some View {
         DetailPanel("Experience Source") {
             VStack(alignment: .leading, spacing: 12) {

@@ -42,6 +42,7 @@ struct ApplicationFileDTO: Codable {
     var selectedExperienceIDs: [String]; var selectedProjectIDs: [String]?; var selectedVariantIDs: [String: String]?
     var selectedRoleDescriptions: [String: String]?
     var experienceOrder: [String]?
+    var sectionOrder: [String]?
     var skillsBlock: String?; var summary: String?
     var archivedAt: String?; var createdAt: String?; var updatedAt: String?
     var paths: ApplicationPathsDTO; var documents: [ApplicationDocumentLinkDTO]
@@ -54,6 +55,7 @@ struct ApplicationFileDTO: Codable {
         case selectedProjectIDs = "selected_project_ids"; case selectedVariantIDs = "selected_variant_ids"
         case selectedRoleDescriptions = "role_descriptions"
         case experienceOrder = "experience_order"
+        case sectionOrder = "section_order"
         case skillsBlock = "skills_block"; case summary
         case archivedAt = "archived_at"; case createdAt = "created_at"; case updatedAt = "updated_at"
         case paths; case documents

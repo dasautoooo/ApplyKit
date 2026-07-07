@@ -62,6 +62,8 @@ struct ApplicationEditorView: View {
                         }
                         documentActions
                             .editorSection(.documents, space: scrollSpace)
+                        sectionOrderSection
+                            .editorSection(.sectionOrder, space: scrollSpace)
                         HStack(alignment: .top, spacing: 16) {
                             selectedExperienceSection
                             selectedProjectSection
