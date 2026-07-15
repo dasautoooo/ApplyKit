@@ -283,7 +283,7 @@ extension ApplicationEditorView {
     }
 
     var documentActions: some View {
-        DetailPanel("Documents") {
+        DetailPanel("Documents", collapseKey: "applicationEditor.collapsed.documents") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Button {

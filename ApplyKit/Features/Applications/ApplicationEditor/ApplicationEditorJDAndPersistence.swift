@@ -7,8 +7,22 @@ import AppKit
 import SwiftUI
 
 extension ApplicationEditorView {
+    /// Right-hand "Job Context" inspector: everything about the job itself, kept
+    /// alongside the resume-building content so both can be read at once.
+    var jobContextInspector: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                jobDescriptionSection
+                jdAnalysisSection
+                curatedBulletsSection
+            }
+            .padding(16)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
     var jobDescriptionSection: some View {
-        DetailPanel("Job Description") {
+        DetailPanel("Job Description", collapseKey: "applicationEditor.collapsed.jobDescription") {
             TextEditor(text: $application.jobDescription)
                 .font(.body.monospaced())
                 .frame(minHeight: 220)
@@ -16,7 +30,7 @@ extension ApplicationEditorView {
     }
 
     var jdAnalysisSection: some View {
-        DetailPanel("JD Analysis") {
+        DetailPanel("JD Analysis", collapseKey: "applicationEditor.collapsed.jdAnalysis") {
             Button {
                 Task { await analyzeJD() }
             } label: {
@@ -66,7 +80,7 @@ extension ApplicationEditorView {
     }
 
     var curatedBulletsSection: some View {
-        DetailPanel("Experience Gap Suggestions") {
+        DetailPanel("Experience Gap Suggestions", collapseKey: "applicationEditor.collapsed.gapSuggestions") {
             Button {
                 Task { await curateBullets() }
             } label: {
@@ -220,7 +234,7 @@ extension ApplicationEditorView {
     }
 
     var notesSection: some View {
-        DetailPanel("Notes") {
+        DetailPanel("Notes", collapseKey: "applicationEditor.collapsed.notes") {
             TextEditor(text: $application.notes)
                 .frame(minHeight: 120)
         }

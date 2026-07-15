@@ -27,6 +27,8 @@ struct ApplicationEditorView: View {
     @State var saveAsMasterResumeName = ""
     @State private var scrollModel = EditorScrollModel()
     @State private var saveDebouncer = Debouncer()
+    @AppStorage("applicationEditor.inspectorVisible") private var isInspectorVisible = true
+    @AppStorage("applicationEditor.inspectorWidth") private var inspectorWidth = 380.0
 
     private let scrollSpace = "applicationEditorScroll"
 
@@ -42,9 +44,39 @@ struct ApplicationEditorView: View {
     }
 
     var body: some View {
+        StableInspectorSplit(
+            inspectorWidth: Binding(
+                get: { CGFloat(inspectorWidth) },
+                set: { inspectorWidth = Double($0) }
+            ),
+            isVisible: $isInspectorVisible
+        ) {
+            resumeBuildingPane
+        } inspector: {
+            jobContextInspector
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .navigationTitle(application.displayTitle)
+        .onChange(of: storeCuratedSuggestionsData, initial: true) { _, newValue in
+            guard curatedSuggestions.isEmpty, !newValue.isEmpty else { return }
+            curatedSuggestions = decodeCuratedSuggestions(newValue)
+        }
+        .onChange(of: applicationPersistenceFingerprint) { _, _ in
+            saveDebouncer.schedule { persistApplicationChanges() }
+        }
+        .onDisappear {
+            saveDebouncer.flush { persistApplicationChanges() }
+        }
+    }
+
+    private var resumeBuildingPane: some View {
         ScrollViewReader { proxy in
             HStack(alignment: .top, spacing: 0) {
-                EditorSectionRail(model: scrollModel) { section in
+                EditorSectionRail(
+                    model: scrollModel,
+                    isInspectorVisible: isInspectorVisible,
+                    onToggleInspector: { isInspectorVisible.toggle() }
+                ) { section in
                     scrollModel.isAutoScrolling = true
                     scrollModel.active = section
                     withAnimation(.easeInOut(duration: 0.25)) {
@@ -60,7 +92,7 @@ struct ApplicationEditorView: View {
                     LazyVStack(alignment: .leading, spacing: 18) {
                         header
                             .editorSection(.roleDetails, space: scrollSpace)
-                        DetailPanel("Role Details") {
+                        DetailPanel("Role Details", collapseKey: "applicationEditor.collapsed.roleDetails") {
                             roleForm
                         }
                         masterResumePanel
@@ -80,12 +112,6 @@ struct ApplicationEditorView: View {
                             .editorSection(.tailorExperience, space: scrollSpace)
                         skillsSection
                             .editorSection(.skills, space: scrollSpace)
-                        jobDescriptionSection
-                            .editorSection(.jobDescription, space: scrollSpace)
-                        jdAnalysisSection
-                            .editorSection(.jdAnalysis, space: scrollSpace)
-                        curatedBulletsSection
-                            .editorSection(.gapSuggestions, space: scrollSpace)
                         notesSection
                             .editorSection(.notes, space: scrollSpace)
                     }
@@ -99,18 +125,6 @@ struct ApplicationEditorView: View {
                     updateActiveSection(offsets)
                 }
             }
-        }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .navigationTitle(application.displayTitle)
-        .onChange(of: storeCuratedSuggestionsData, initial: true) { _, newValue in
-            guard curatedSuggestions.isEmpty, !newValue.isEmpty else { return }
-            curatedSuggestions = decodeCuratedSuggestions(newValue)
-        }
-        .onChange(of: applicationPersistenceFingerprint) { _, _ in
-            saveDebouncer.schedule { persistApplicationChanges() }
-        }
-        .onDisappear {
-            saveDebouncer.flush { persistApplicationChanges() }
         }
     }
 

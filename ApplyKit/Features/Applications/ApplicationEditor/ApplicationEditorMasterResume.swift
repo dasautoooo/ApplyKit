@@ -12,7 +12,7 @@ import SwiftUI
 
 extension ApplicationEditorView {
     var masterResumePanel: some View {
-        DetailPanel("Master Resume") {
+        DetailPanel("Master Resume", collapseKey: "applicationEditor.collapsed.masterResume") {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
                     if !store.masterResumes.isEmpty {

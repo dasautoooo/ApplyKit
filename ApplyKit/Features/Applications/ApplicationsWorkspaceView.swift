@@ -18,6 +18,7 @@ struct ApplicationsWorkspaceView: View {
     @State private var applicationPendingDeletion: JobApplication?
     @State private var shouldDeleteApplicationSourceFiles = false
     @State private var sidebarWidth: CGFloat = 360
+    @AppStorage("applicationEditor.inspectorVisible") private var isInspectorVisible = true
 
     var body: some View {
         StableSidebarSplit(
@@ -104,6 +105,17 @@ struct ApplicationsWorkspaceView: View {
                 } primaryAction: {
                     addApplication()
                 }
+            }
+
+            ToolbarItem {
+                Button {
+                    isInspectorVisible.toggle()
+                } label: {
+                    Label("Job Context", systemImage: "sidebar.right")
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .help("Show or hide the Job Context inspector")
+                .disabled(selectedApplication == nil)
             }
         }
         .sheet(item: $applicationPendingDeletion) { application in

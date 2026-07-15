@@ -25,9 +25,6 @@ enum EditorSection: Int, CaseIterable, Identifiable {
     case experience
     case tailorExperience
     case skills
-    case jobDescription
-    case jdAnalysis
-    case gapSuggestions
     case notes
 
     var id: Int { rawValue }
@@ -42,9 +39,6 @@ enum EditorSection: Int, CaseIterable, Identifiable {
         case .experience: "Experience"
         case .tailorExperience: "Tailor Experience"
         case .skills: "Skills"
-        case .jobDescription: "Job Description"
-        case .jdAnalysis: "JD Analysis"
-        case .gapSuggestions: "Gap Suggestions"
         case .notes: "Notes"
         }
     }
@@ -59,9 +53,6 @@ enum EditorSection: Int, CaseIterable, Identifiable {
         case .experience: "checklist"
         case .tailorExperience: "slider.horizontal.3"
         case .skills: "wrench.and.screwdriver"
-        case .jobDescription: "text.alignleft"
-        case .jdAnalysis: "brain"
-        case .gapSuggestions: "sparkles"
         case .notes: "note.text"
         }
     }
@@ -104,6 +95,8 @@ extension View {
 /// Always-visible table of contents for the application editor.
 struct EditorSectionRail: View {
     let model: EditorScrollModel
+    let isInspectorVisible: Bool
+    let onToggleInspector: () -> Void
     let onSelect: (EditorSection) -> Void
 
     var body: some View {
@@ -113,27 +106,48 @@ struct EditorSectionRail: View {
                 Button {
                     onSelect(section)
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: section.icon)
-                            .font(.caption)
-                            .frame(width: 16)
-                        Text(section.title)
-                            .font(.callout.weight(isActive ? .semibold : .regular))
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                    }
-                    .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(isActive ? Color.accentColor.opacity(0.15) : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 7))
-                    .contentShape(Rectangle())
+                    railRowLabel(
+                        title: section.title,
+                        icon: section.icon,
+                        isHighlighted: isActive
+                    )
                 }
                 .buttonStyle(.plain)
             }
+
+            Divider()
+                .padding(.vertical, 6)
+
+            Button(action: onToggleInspector) {
+                railRowLabel(
+                    title: "Job Context",
+                    icon: "text.alignleft",
+                    isHighlighted: isInspectorVisible
+                )
+            }
+            .buttonStyle(.plain)
+            .help(isInspectorVisible ? "Hide the Job Context inspector" : "Show the Job Context inspector")
         }
         .frame(width: 200, alignment: .topLeading)
         .padding(.horizontal, 10)
+    }
+
+    private func railRowLabel(title: String, icon: String, isHighlighted: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.caption)
+                .frame(width: 16)
+            Text(title)
+                .font(.callout.weight(isHighlighted ? .semibold : .regular))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(isHighlighted ? Color.accentColor : Color.secondary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isHighlighted ? Color.accentColor.opacity(0.15) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .contentShape(Rectangle())
     }
 }

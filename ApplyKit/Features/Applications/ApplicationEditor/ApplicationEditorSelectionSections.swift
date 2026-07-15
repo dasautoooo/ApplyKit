@@ -12,21 +12,30 @@ import SwiftUI
 extension ApplicationEditorView {
     /// Per-application Summary (optional; omitted from the resume when blank).
     var summarySection: some View {
-        ResumeSummarySection(content: $application)
+        ResumeSummarySection(content: $application, collapseKey: "applicationEditor.collapsed.summary")
     }
 
     /// Per-application Skills override (falls back to the global block when blank).
     var skillsSection: some View {
-        ResumeSkillsSection(content: $application, globalSkillsBlock: store.profile.skillsBlock)
+        ResumeSkillsSection(
+            content: $application,
+            globalSkillsBlock: store.profile.skillsBlock,
+            collapseKey: "applicationEditor.collapsed.skills"
+        )
     }
 
     /// Per-application resume section ordering.
     var sectionOrderSection: some View {
-        ResumeSectionOrderSection(content: $application)
+        ResumeSectionOrderSection(content: $application, collapseKey: "applicationEditor.collapsed.sectionOrder")
     }
 
     var selectedExperienceSection: some View {
-        ResumeExperienceSelectionSection(content: $application, experiences: experiences, employments: employments) {
+        ResumeExperienceSelectionSection(
+            content: $application,
+            experiences: experiences,
+            employments: employments,
+            collapseKey: "applicationEditor.collapsed.experienceSource"
+        ) {
             if aiBackendPath != nil {
                 HStack {
                     Button {
@@ -43,7 +52,12 @@ extension ApplicationEditorView {
     }
 
     var selectedProjectSection: some View {
-        ResumeProjectSelectionSection(content: $application, experiences: experiences, employments: employments)
+        ResumeProjectSelectionSection(
+            content: $application,
+            experiences: experiences,
+            employments: employments,
+            collapseKey: "applicationEditor.collapsed.selectedProjects"
+        )
     }
 
     var selectedBulletWordingSection: some View {
@@ -59,7 +73,8 @@ extension ApplicationEditorView {
             experienceBinding: experienceBinding(for:),
             onPersistExperience: persistExperienceChanges,
             onPersistApplication: persistApplicationChanges,
-            onPersistContent: persistApplicationChanges
+            onPersistContent: persistApplicationChanges,
+            collapseKey: "applicationEditor.collapsed.tailorExperience"
         )
     }
 

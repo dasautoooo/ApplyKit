@@ -12,9 +12,10 @@ import SwiftUI
 /// Summary text (optional; omitted from the resume when blank).
 struct ResumeSummarySection<Content: ResumeContentModel>: View {
     @Binding var content: Content
+    var collapseKey: String? = nil
 
     var body: some View {
-        DetailPanel("Summary") {
+        DetailPanel("Summary", collapseKey: collapseKey) {
             VStack(alignment: .leading, spacing: 4) {
                 TextEditor(text: $content.summaryText)
                     .font(.body.monospaced())
@@ -35,9 +36,10 @@ struct ResumeSummarySection<Content: ResumeContentModel>: View {
 struct ResumeSkillsSection<Content: ResumeContentModel>: View {
     @Binding var content: Content
     let globalSkillsBlock: String
+    var collapseKey: String? = nil
 
     var body: some View {
-        DetailPanel("Skills", trailing: {
+        DetailPanel("Skills", collapseKey: collapseKey, trailing: {
             Text(content.hasSkillsOverride ? "Custom" : "Default")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(content.hasSkillsOverride ? Color.blue : Color.secondary)
@@ -82,9 +84,10 @@ struct ResumeSkillsSection<Content: ResumeContentModel>: View {
 /// bullets in `ExperienceWordingRow`.
 struct ResumeSectionOrderSection<Content: ResumeContentModel>: View {
     @Binding var content: Content
+    var collapseKey: String? = nil
 
     var body: some View {
-        DetailPanel("Section Order") {
+        DetailPanel("Section Order", collapseKey: collapseKey) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(content.sectionOrder.enumerated()), id: \.element) { index, section in
                     HStack {
@@ -139,10 +142,11 @@ struct ResumeExperienceSelectionSection<Content: ResumeContentModel, Accessory: 
     @Binding var content: Content
     let experiences: [ExperienceBullet]
     let employments: [Employment]
+    var collapseKey: String? = nil
     @ViewBuilder var accessory: Accessory
 
     var body: some View {
-        DetailPanel("Experience Source") {
+        DetailPanel("Experience Source", collapseKey: collapseKey) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Work and education bullets used in the resume Experience section and Codex prompts.")
                     .font(.caption)
@@ -188,9 +192,10 @@ struct ResumeProjectSelectionSection<Content: ResumeContentModel>: View {
     @Binding var content: Content
     let experiences: [ExperienceBullet]
     let employments: [Employment]
+    var collapseKey: String? = nil
 
     var body: some View {
-        DetailPanel("Selected Projects") {
+        DetailPanel("Selected Projects", collapseKey: collapseKey) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Projects render separately from work experience in the Selected Projects section.")
                     .font(.caption)
@@ -245,9 +250,10 @@ struct ResumeWordingSection<Content: ResumeContentModel & Identifiable>: View wh
     let onPersistExperience: (ExperienceBullet) -> Void
     let onPersistApplication: (JobApplication) -> Void
     let onPersistContent: (Content) -> Void
+    var collapseKey: String? = nil
 
     var body: some View {
-        DetailPanel("Tailor Experience") {
+        DetailPanel("Tailor Experience", collapseKey: collapseKey) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Each job groups its selected bullets below. Set the role description, choose base wording or a named variant per bullet, and reorder bullets within the job.")
                     .font(.caption)

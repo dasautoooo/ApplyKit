@@ -114,20 +114,33 @@ struct ExperienceWordingRow<Content: ResumeContentModel & Identifiable>: View wh
                     .controlSize(.small)
                     .disabled(isRefining || activityMonitor.state == .running)
                 }
+
+                if selectedVariant != nil {
+                    ReferenceTextPopoverButton(
+                        label: "View Base",
+                        popoverTitle: "Base bullet",
+                        text: experience.bulletText,
+                        emptyPlaceholder: "No base bullet yet."
+                    )
+                }
             }
 
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Base bullet")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Text(experience.bulletText.trimmed.isEmpty ? "No base bullet yet." : experience.bulletText)
-                    .font(.body.monospaced())
-                    .foregroundStyle(experience.bulletText.trimmed.isEmpty ? .secondary : .primary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(9)
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 7))
+            // The base text stays inline only while it is the active wording;
+            // with a variant selected it moves to the "View Base" popover.
+            if selectedVariant == nil {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Base bullet")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(experience.bulletText.trimmed.isEmpty ? "No base bullet yet." : experience.bulletText)
+                        .font(.body.monospaced())
+                        .foregroundStyle(experience.bulletText.trimmed.isEmpty ? .secondary : .primary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(9)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                }
             }
 
             if let variantID = selectedVariant?.id {
@@ -364,6 +377,15 @@ struct RoleDescriptionRow<Content: ResumeContentModel>: View {
 
                 Spacer()
 
+                if !isHidden && hasOverride {
+                    ReferenceTextPopoverButton(
+                        label: "View Default",
+                        popoverTitle: "Default role description",
+                        text: employment.roleDescription,
+                        emptyPlaceholder: "No default role description."
+                    )
+                }
+
                 Toggle("Include", isOn: includeBinding)
                     .toggleStyle(.checkbox)
                     .help("Include the role description line in the generated resume")
@@ -400,18 +422,22 @@ struct RoleDescriptionRow<Content: ResumeContentModel>: View {
                         .frame(minHeight: 72)
                 }
 
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Default")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(employment.roleDescription.trimmed.isEmpty ? "No default role description." : employment.roleDescription)
-                        .font(.body.monospaced())
-                        .foregroundStyle(employment.roleDescription.trimmed.isEmpty ? .secondary : .primary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(9)
-                        .background(Color(nsColor: .controlBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                // The default text stays inline only while it is the active wording;
+                // with a custom override it moves to the "View Default" popover.
+                if !hasOverride {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Default")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(employment.roleDescription.trimmed.isEmpty ? "No default role description." : employment.roleDescription)
+                            .font(.body.monospaced())
+                            .foregroundStyle(employment.roleDescription.trimmed.isEmpty ? .secondary : .primary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(9)
+                            .background(Color(nsColor: .controlBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                    }
                 }
             }
         }
