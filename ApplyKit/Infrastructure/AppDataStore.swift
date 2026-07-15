@@ -41,6 +41,7 @@ struct ResumeProfile {
     var employments:     [Employment]        = []
     var documents:       [GeneratedDocument] = []
     var promptTemplates: [PromptTemplate]    = []
+    var masterResumes:   [MasterResume]      = []
     var aiRuns:          [AIRun]             = []
     var profile:         ResumeProfile       = ResumeProfile()
 }

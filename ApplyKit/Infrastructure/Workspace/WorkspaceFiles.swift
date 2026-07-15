@@ -8,6 +8,7 @@ enum WorkspaceFiles {
     static let applicationsDirectory = "applications"
     static let experienceBankDirectory = "experience-bank"
     static let promptTemplatesDirectory = "prompt-templates"
+    static let masterResumesDirectory = "master-resumes"
     static let applicationFile = "application.yml"
     static let jobDescriptionFile = "job-description.md"
     static let notesFile = "notes.md"
@@ -24,7 +25,7 @@ enum WorkspaceFiles {
 
     static func manifestDTO() -> WorkspaceManifestDTO {
         WorkspaceManifestDTO(name: "ApplyKit Workspace", schemaVersion: 1,
-            managedDirectories: [applicationsDirectory, experienceBankDirectory, promptTemplatesDirectory],
+            managedDirectories: [applicationsDirectory, experienceBankDirectory, promptTemplatesDirectory, masterResumesDirectory],
             updatedAt: WorkspaceDateCodec.string(from: Date()) ?? "")
     }
 
@@ -32,7 +33,8 @@ enum WorkspaceFiles {
         for folder in [root,
             root.appendingPathComponent(applicationsDirectory, isDirectory: true),
             root.appendingPathComponent(experienceBankDirectory, isDirectory: true),
-            root.appendingPathComponent(promptTemplatesDirectory, isDirectory: true)] {
+            root.appendingPathComponent(promptTemplatesDirectory, isDirectory: true),
+            root.appendingPathComponent(masterResumesDirectory, isDirectory: true)] {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         }
     }
@@ -55,7 +57,15 @@ enum WorkspaceFiles {
         if try yamlFiles(under: expRoot).contains(where: { url in
             isEmploymentURL(url) ? url.lastPathComponent != employmentIndexFile : url.lastPathComponent != experienceIndexFile
         }) { return true }
-        return !(try yamlFiles(under: root.appendingPathComponent(promptTemplatesDirectory, isDirectory: true)).isEmpty)
+        if !(try yamlFiles(under: root.appendingPathComponent(promptTemplatesDirectory, isDirectory: true)).isEmpty) { return true }
+        return !(try masterResumeYAMLFiles(in: root).isEmpty)
+    }
+
+    /// Master resume YAMLs live directly inside `master-resumes/`; subfolders hold
+    /// generated preview output (.tex/.pdf/.log) and must never be parsed as DTOs.
+    static func masterResumeYAMLFiles(in root: URL) throws -> [URL] {
+        let dir = root.appendingPathComponent(masterResumesDirectory, isDirectory: true)
+        return try yamlFiles(under: dir).filter { $0.deletingLastPathComponent().standardizedFileURL.path == dir.standardizedFileURL.path }
     }
 
     static func yamlFiles(under root: URL) throws -> [URL] {
@@ -103,6 +113,7 @@ enum WorkspaceFiles {
             selectedProjectIDs: application.selectedProjectIDs.map(\.uuidString).sorted(),
             selectedVariantIDs: variantSelectionDTO(from: application),
             selectedRoleDescriptions: roleDescriptionDTO(from: application),
+            hiddenRoleDescriptions: application.hiddenRoleDescriptionEmploymentIDs.map(\.uuidString).sorted(),
             experienceOrder: application.experienceOrder.map(\.uuidString),
             sectionOrder: application.sectionOrder.map(\.rawValue),
             skillsBlock: application.skillsBlockText, summary: application.summaryText,
@@ -124,8 +135,9 @@ enum WorkspaceFiles {
         app.coverLetterNeeded = dto.coverLetterNeeded
         app.selectedExperienceIDsText = dto.selectedExperienceIDs.sorted().joined(separator: ",")
         app.selectedProjectIDsText = (dto.selectedProjectIDs ?? []).sorted().joined(separator: ",")
-        app.selectedVariantIDsText = JobApplication.encodeVariantSelections(variantSelections(from: dto.selectedVariantIDs))
-        app.employmentRoleDescriptionsText = JobApplication.encodeRoleDescriptions(roleDescriptions(from: dto.selectedRoleDescriptions))
+        app.selectedVariantIDsText = ResumeFieldCodec.encodeVariantSelections(variantSelections(from: dto.selectedVariantIDs))
+        app.employmentRoleDescriptionsText = ResumeFieldCodec.encodeRoleDescriptions(roleDescriptions(from: dto.selectedRoleDescriptions))
+        app.hiddenRoleDescriptionIDsText = (dto.hiddenRoleDescriptions ?? []).sorted().joined(separator: ",")
         app.experienceOrderText = (dto.experienceOrder ?? []).joined(separator: ",")
         app.sectionOrderText = (dto.sectionOrder ?? []).joined(separator: ",")
         app.skillsBlockText = dto.skillsBlock ?? ""
@@ -142,8 +154,8 @@ enum WorkspaceFiles {
         return app
     }
 
-    static func variantSelectionDTO(from application: JobApplication) -> [String: String] {
-        Dictionary(uniqueKeysWithValues: application.selectedVariantIDs.map { ($0.key.uuidString, $0.value.uuidString) })
+    static func variantSelectionDTO(from content: some ResumeContentModel) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: content.selectedVariantIDs.map { ($0.key.uuidString, $0.value.uuidString) })
     }
 
     static func variantSelections(from dto: [String: String]?) -> [UUID: UUID] {
@@ -154,8 +166,8 @@ enum WorkspaceFiles {
         })
     }
 
-    static func roleDescriptionDTO(from application: JobApplication) -> [String: String] {
-        Dictionary(uniqueKeysWithValues: application.employmentRoleDescriptions.map { ($0.key.uuidString, $0.value) })
+    static func roleDescriptionDTO(from content: some ResumeContentModel) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: content.employmentRoleDescriptions.map { ($0.key.uuidString, $0.value) })
     }
 
     static func roleDescriptions(from dto: [String: String]?) -> [UUID: String] {
@@ -229,6 +241,39 @@ enum WorkspaceFiles {
         emp.createdAt = WorkspaceDateCodec.date(from: dto.createdAt) ?? Date()
         emp.updatedAt = WorkspaceDateCodec.date(from: dto.updatedAt) ?? Date()
         return emp
+    }
+
+    // MARK: - Master Resumes
+    static func masterResumeDTO(from resume: MasterResume) -> MasterResumeFileDTO {
+        MasterResumeFileDTO(id: resume.id.uuidString, name: resume.name,
+            notes: resume.notes.isEmpty ? nil : resume.notes,
+            selectedExperienceIDs: resume.selectedExperienceIDs.map(\.uuidString).sorted(),
+            selectedProjectIDs: resume.selectedProjectIDs.map(\.uuidString).sorted(),
+            selectedVariantIDs: variantSelectionDTO(from: resume),
+            selectedRoleDescriptions: roleDescriptionDTO(from: resume),
+            hiddenRoleDescriptions: resume.hiddenRoleDescriptionEmploymentIDs.map(\.uuidString).sorted(),
+            experienceOrder: resume.experienceOrder.map(\.uuidString),
+            sectionOrder: resume.sectionOrder.map(\.rawValue),
+            skillsBlock: resume.skillsBlockText, summary: resume.summaryText,
+            createdAt: WorkspaceDateCodec.string(from: resume.createdAt), updatedAt: WorkspaceDateCodec.string(from: resume.updatedAt))
+    }
+
+    static func makeMasterResume(from dto: MasterResumeFileDTO) -> MasterResume {
+        var resume = MasterResume(name: dto.name)
+        if let id = UUID(uuidString: dto.id) { resume.id = id }
+        resume.notes = dto.notes ?? ""
+        resume.selectedExperienceIDsText = dto.selectedExperienceIDs.sorted().joined(separator: ",")
+        resume.selectedProjectIDsText = (dto.selectedProjectIDs ?? []).sorted().joined(separator: ",")
+        resume.selectedVariantIDsText = ResumeFieldCodec.encodeVariantSelections(variantSelections(from: dto.selectedVariantIDs))
+        resume.employmentRoleDescriptionsText = ResumeFieldCodec.encodeRoleDescriptions(roleDescriptions(from: dto.selectedRoleDescriptions))
+        resume.hiddenRoleDescriptionIDsText = (dto.hiddenRoleDescriptions ?? []).sorted().joined(separator: ",")
+        resume.experienceOrderText = (dto.experienceOrder ?? []).joined(separator: ",")
+        resume.sectionOrderText = (dto.sectionOrder ?? []).joined(separator: ",")
+        resume.skillsBlockText = dto.skillsBlock ?? ""
+        resume.summaryText = dto.summary ?? ""
+        resume.createdAt = WorkspaceDateCodec.date(from: dto.createdAt) ?? Date()
+        resume.updatedAt = WorkspaceDateCodec.date(from: dto.updatedAt) ?? Date()
+        return resume
     }
 
     // MARK: - Prompt Templates & Documents
@@ -382,6 +427,30 @@ enum WorkspaceFiles {
     static func findPromptTemplateFile(id: UUID, in root: URL) throws -> URL? {
         for file in try yamlFiles(under: root.appendingPathComponent(promptTemplatesDirectory, isDirectory: true)) {
             guard let dto = try? YAMLFileStore.read(PromptTemplateFileDTO.self, from: file),
+                  let parsed = UUID(uuidString: dto.id) else { continue }
+            if parsed == id { return file }
+        }
+        return nil
+    }
+
+    static func fileURLForMasterResume(_ resume: MasterResume, in root: URL) throws -> URL {
+        let fileName = slug(from: resume.name, fallback: resume.id.uuidString.lowercased())
+        let desired = root.appendingPathComponent(masterResumesDirectory, isDirectory: true).appendingPathComponent("\(fileName).yml")
+        if let existing = try findMasterResumeFile(id: resume.id, in: root) {
+            if existing.standardizedFileURL.path != desired.standardizedFileURL.path,
+               FileManager.default.fileExists(atPath: existing.path),
+               !FileManager.default.fileExists(atPath: desired.path) {
+                try FileManager.default.moveItem(at: existing, to: desired)
+                return desired
+            }
+            return existing
+        }
+        return desired
+    }
+
+    static func findMasterResumeFile(id: UUID, in root: URL) throws -> URL? {
+        for file in try masterResumeYAMLFiles(in: root) {
+            guard let dto = try? YAMLFileStore.read(MasterResumeFileDTO.self, from: file),
                   let parsed = UUID(uuidString: dto.id) else { continue }
             if parsed == id { return file }
         }

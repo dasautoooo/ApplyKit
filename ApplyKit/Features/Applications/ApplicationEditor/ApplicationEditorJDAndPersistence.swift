@@ -269,6 +269,7 @@ extension ApplicationEditorView {
             application.selectedProjectIDsText,
             application.selectedVariantIDsText,
             application.employmentRoleDescriptionsText,
+            application.hiddenRoleDescriptionIDsText,
             application.experienceOrderText,
             application.sectionOrderText,
             application.skillsBlockText,

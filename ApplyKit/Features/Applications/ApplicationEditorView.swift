@@ -22,6 +22,9 @@ struct ApplicationEditorView: View {
     @State var curatedSuggestions: [CuratedBulletSuggestion] = []
 
     @State var generatingDocumentKind: GeneratedDocumentKind?
+    @State var masterResumePendingApply: MasterResume?
+    @State var showSaveAsMasterResume = false
+    @State var saveAsMasterResumeName = ""
     @State private var scrollModel = EditorScrollModel()
     @State private var saveDebouncer = Debouncer()
 
@@ -60,10 +63,14 @@ struct ApplicationEditorView: View {
                         DetailPanel("Role Details") {
                             roleForm
                         }
+                        masterResumePanel
+                            .editorSection(.masterResume, space: scrollSpace)
                         documentActions
                             .editorSection(.documents, space: scrollSpace)
                         sectionOrderSection
                             .editorSection(.sectionOrder, space: scrollSpace)
+                        summarySection
+                            .editorSection(.summary, space: scrollSpace)
                         HStack(alignment: .top, spacing: 16) {
                             selectedExperienceSection
                             selectedProjectSection
@@ -71,8 +78,6 @@ struct ApplicationEditorView: View {
                         .editorSection(.experience, space: scrollSpace)
                         selectedBulletWordingSection
                             .editorSection(.tailorExperience, space: scrollSpace)
-                        summarySection
-                            .editorSection(.summary, space: scrollSpace)
                         skillsSection
                             .editorSection(.skills, space: scrollSpace)
                         jobDescriptionSection

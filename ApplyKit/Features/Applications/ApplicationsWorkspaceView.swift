@@ -90,8 +90,19 @@ struct ApplicationsWorkspaceView: View {
         }
         .toolbar {
             ToolbarItem {
-                Button(action: addApplication) {
+                Menu {
+                    Button("Blank Application") { addApplication() }
+                    if !store.masterResumes.isEmpty {
+                        Section("From Master Resume") {
+                            ForEach(store.masterResumes) { preset in
+                                Button(preset.displayTitle) { addApplication(from: preset) }
+                            }
+                        }
+                    }
+                } label: {
                     Label("New Application", systemImage: "plus")
+                } primaryAction: {
+                    addApplication()
                 }
             }
         }
@@ -234,8 +245,12 @@ struct ApplicationsWorkspaceView: View {
         return flags
     }
 
-    private func addApplication() {
+    private func addApplication(from masterResume: MasterResume? = nil) {
         var application = JobApplication(companyName: "New Company", jobTitle: "New Role")
+        if let masterResume {
+            application.jobTitle = masterResume.displayTitle
+            application.copyResumeContent(from: masterResume)
+        }
         store.applications.insert(application, at: 0)
         persist(application)
         selectedApplicationID = application.id

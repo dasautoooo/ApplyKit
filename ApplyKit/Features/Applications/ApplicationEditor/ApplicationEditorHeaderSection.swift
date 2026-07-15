@@ -227,9 +227,16 @@ extension ApplicationEditorView {
                     let emp = group.employment!
                     let header = emp.location.trimmed.isEmpty ? emp.summaryLine : "\(emp.summaryLine), \(emp.location)"
                     var lines = ["#### \(header)"]
-                    let role = application.roleDescription(for: emp.id) ?? emp.roleDescription
-                    if !role.trimmed.isEmpty { lines.append("- \(role)") }
-                    lines += group.bullets.map { "- \($0.bulletText(variantID: application.selectedVariantID(for: $0.id)))" }
+                    for item in group.items {
+                        switch item {
+                        case .roleDescription(let employment):
+                            guard !application.isRoleDescriptionHidden(for: employment.id) else { continue }
+                            let role = application.roleDescription(for: employment.id) ?? employment.roleDescription
+                            if !role.trimmed.isEmpty { lines.append("- \(role)") }
+                        case .bullet(let bullet):
+                            lines.append("- \(bullet.bulletText(variantID: application.selectedVariantID(for: bullet.id)))")
+                        }
+                    }
                     return lines.joined(separator: "\n")
                 }.joined(separator: "\n\n")
                 sectionBlocks[.experience] = "### Experience\n\(body)"

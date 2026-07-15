@@ -29,14 +29,17 @@ struct SelectionGroupView<Content: View>: View {
     }
 }
 
-struct ApplicationExperienceWordingRow: View {
+struct ExperienceWordingRow<Content: ResumeContentModel & Identifiable>: View where Content.ID == UUID {
     @Environment(AppActivityMonitor.self) private var activityMonitor
-    @Binding var application: JobApplication
+    @Binding var content: Content
     @Binding var experience: ExperienceBullet
     let applications: [JobApplication]
     let settings: AppSettings?
+    /// Builds the AI refinement prompt for this bullet; nil hides "Refine with AI".
+    let refinePrompt: ((ExperienceBullet) -> String)?
     let onPersistExperience: (ExperienceBullet) -> Void
     let onPersistApplication: (JobApplication) -> Void
+    let onPersistContent: (Content) -> Void
     var canMoveUp: Bool = false
     var canMoveDown: Bool = false
     var onMoveUp: () -> Void = {}
@@ -102,7 +105,7 @@ struct ApplicationExperienceWordingRow: View {
                 }
                 .controlSize(.small)
 
-                if rowAIBackendPath != nil {
+                if refinePrompt != nil && rowAIBackendPath != nil {
                     Button {
                         Task { await refineWithAI() }
                     } label: {
@@ -157,7 +160,7 @@ struct ApplicationExperienceWordingRow: View {
     }
 
     private var selectedVariantID: UUID? {
-        guard let id = application.selectedVariantID(for: experience.id),
+        guard let id = content.selectedVariantID(for: experience.id),
               experience.variations.contains(where: { $0.id == id }) else {
             return nil
         }
@@ -173,7 +176,9 @@ struct ApplicationExperienceWordingRow: View {
         Binding(
             get: { selectedVariantID },
             set: { newValue in
-                application.setVariant(newValue, for: experience.id)
+                var updated = content
+                updated.setVariant(newValue, for: experience.id)
+                content = updated
             }
         )
     }
@@ -214,13 +219,13 @@ struct ApplicationExperienceWordingRow: View {
     }
 
     private func refineWithAI() async {
-        guard rowAIBackendPath != nil, activityMonitor.state != .running else { return }
+        guard let refinePrompt, rowAIBackendPath != nil, activityMonitor.state != .running else { return }
         await MainActor.run {
             isRefining = true
             activityMonitor.start("Refining bullet with AI…")
         }
         do {
-            let prompt = PromptBuilder.bulletRefinementPrompt(application: application, experience: experience)
+            let prompt = refinePrompt(experience)
             let refined = try await runRowAI(prompt: prompt)
             let text = refined.trimmed
             guard !text.isEmpty else {
@@ -235,9 +240,11 @@ struct ApplicationExperienceWordingRow: View {
                 let variant = ExperienceVariation(name: "AI Refined", bulletText: text)
                 variations.append(variant)
                 experience.variations = variations
-                application.setVariant(variant.id, for: experience.id)
+                var updated = content
+                updated.setVariant(variant.id, for: experience.id)
+                content = updated
                 onPersistExperience(experience)
-                onPersistApplication(application)
+                onPersistContent(updated)
                 isRefining = false
                 activityMonitor.succeed("Bullet refined — variant added.")
             }
@@ -258,8 +265,10 @@ struct ApplicationExperienceWordingRow: View {
         variations.append(variant)
         experience.variations = variations
         if selectingForApplication {
-            application.setVariant(variant.id, for: experience.id)
-            onPersistApplication(application)
+            var updated = content
+            updated.setVariant(variant.id, for: experience.id)
+            content = updated
+            onPersistContent(updated)
         }
         onPersistExperience(experience)
     }
@@ -275,10 +284,16 @@ struct ApplicationExperienceWordingRow: View {
         variations.removeAll { $0.id == variantID }
         experience.variations = variations
 
-        for app in applications where app.selectedVariantID(for: experience.id) == variantID {
+        for app in applications where app.id != content.id && app.selectedVariantID(for: experience.id) == variantID {
             var updated = app
             updated.setVariant(nil, for: experience.id)
             onPersistApplication(updated)
+        }
+        if content.selectedVariantID(for: experience.id) == variantID {
+            var updated = content
+            updated.setVariant(nil, for: experience.id)
+            content = updated
+            onPersistContent(updated)
         }
 
         onPersistExperience(experience)
@@ -296,34 +311,52 @@ struct ApplicationExperienceWordingRow: View {
     }
 }
 
-struct ApplicationRoleDescriptionRow: View {
-    @Binding var application: JobApplication
+struct RoleDescriptionRow<Content: ResumeContentModel>: View {
+    @Binding var content: Content
     let employment: Employment
-    /// When true, render without the card chrome (used as a group header inside a container).
-    var embedded: Bool = false
+    var canMoveUp: Bool = false
+    var canMoveDown: Bool = false
+    var onMoveUp: () -> Void = {}
+    var onMoveDown: () -> Void = {}
+
+    private var isHidden: Bool {
+        content.isRoleDescriptionHidden(for: employment.id)
+    }
 
     private var hasOverride: Bool {
-        application.roleDescription(for: employment.id) != nil
+        content.roleDescription(for: employment.id) != nil
     }
 
     private var overrideBinding: Binding<String> {
         Binding(
-            get: { application.employmentRoleDescriptions[employment.id] ?? "" },
-            set: { application.setRoleDescription($0, for: employment.id) }
+            get: { content.employmentRoleDescriptions[employment.id] ?? "" },
+            set: { newValue in
+                var updated = content
+                updated.setRoleDescription(newValue, for: employment.id)
+                content = updated
+            }
+        )
+    }
+
+    private var includeBinding: Binding<Bool> {
+        Binding(
+            get: { !isHidden },
+            set: { newValue in
+                var updated = content
+                updated.setRoleDescriptionHidden(!newValue, for: employment.id)
+                content = updated
+            }
         )
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 10) {
-                Image(systemName: "briefcase.fill")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(employment.displayTitle)
+                    Text("Role Description")
                         .font(.callout.weight(.semibold))
                         .lineLimit(1)
-                    Text([employment.role, employment.dateRangeText()].filter { !$0.trimmed.isEmpty }.joined(separator: " - "))
+                    Text("Intro line for \(employment.displayTitle)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -331,44 +364,64 @@ struct ApplicationRoleDescriptionRow: View {
 
                 Spacer()
 
-                Text(hasOverride ? "Custom" : "Default")
+                Toggle("Include", isOn: includeBinding)
+                    .toggleStyle(.checkbox)
+                    .help("Include the role description line in the generated resume")
+
+                HStack(spacing: 4) {
+                    Button(action: onMoveUp) {
+                        Image(systemName: "chevron.up")
+                    }
+                    .controlSize(.small)
+                    .disabled(!canMoveUp || isHidden)
+                    .help("Move up within this section")
+
+                    Button(action: onMoveDown) {
+                        Image(systemName: "chevron.down")
+                    }
+                    .controlSize(.small)
+                    .disabled(!canMoveDown || isHidden)
+                    .help("Move down within this section")
+                }
+
+                Text(isHidden ? "Hidden" : (hasOverride ? "Custom" : "Default"))
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(hasOverride ? Color.blue : Color.secondary)
+                    .foregroundStyle(isHidden ? Color.orange : (hasOverride ? Color.blue : Color.secondary))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background((hasOverride ? Color.blue : Color.secondary).opacity(0.12))
+                    .background((isHidden ? Color.orange : (hasOverride ? Color.blue : Color.secondary)).opacity(0.12))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             }
 
-            LabeledControl("Role Description") {
-                TextEditor(text: overrideBinding)
-                    .font(.body.monospaced())
-                    .frame(minHeight: 72)
-            }
+            if !isHidden {
+                LabeledControl("Role Description") {
+                    TextEditor(text: overrideBinding)
+                        .font(.body.monospaced())
+                        .frame(minHeight: 72)
+                }
 
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Default")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Text(employment.roleDescription.trimmed.isEmpty ? "No default role description." : employment.roleDescription)
-                    .font(.body.monospaced())
-                    .foregroundStyle(employment.roleDescription.trimmed.isEmpty ? .secondary : .primary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(9)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Default")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(employment.roleDescription.trimmed.isEmpty ? "No default role description." : employment.roleDescription)
+                        .font(.body.monospaced())
+                        .foregroundStyle(employment.roleDescription.trimmed.isEmpty ? .secondary : .primary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(9)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                }
             }
         }
-        .padding(embedded ? 0 : 12)
-        .background(embedded ? Color.clear : Color(nsColor: .textBackgroundColor))
+        .padding(12)
+        .background(Color(nsColor: .textBackgroundColor))
         .overlay {
-            if !embedded {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
-            }
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
         }
-        .clipShape(RoundedRectangle(cornerRadius: embedded ? 0 : 8))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 

@@ -83,6 +83,7 @@ enum WorkspaceService {
                 template: templateText, variantSelections: application.selectedVariantIDs,
                 selectedExperiences: selectedExperiences, selectedProjects: selectedProjects, employments: employments,
                 roleDescriptionOverrides: application.employmentRoleDescriptions,
+                hiddenRoleDescriptions: application.hiddenRoleDescriptionEmploymentIDs,
                 experienceOrder: application.experienceOrder,
                 educationBlock: profile.educationBlock,
                 skillsBlock: application.effectiveSkillsBlock(default: profile.skillsBlock),
@@ -99,6 +100,51 @@ enum WorkspaceService {
             }
         }
         return GeneratedFileResult(texURL: texURL, pdfURL: pdfURL, warnings: warnings)
+    }
+
+    /// Renders a preview resume for a master resume preset, with no application involved.
+    /// Unlike `generateDocument`, output is transient: it lives under
+    /// `master-resumes/<slug>/` and is overwritten on every generation (no
+    /// `GeneratedDocument` manifest is recorded).
+    static func generateMasterResumePreview(
+        _ masterResume: MasterResume,
+        selectedExperiences: [ExperienceBullet],
+        selectedProjects: [ExperienceBullet],
+        employments: [Employment],
+        profile: ResumeProfile,
+        settings: AppSettings
+    ) throws -> GeneratedFileResult {
+        let workspace = try workspaceURL(settings: settings)
+        let didStart = workspace.startAccessingSecurityScopedResource()
+        defer { if didStart { workspace.stopAccessingSecurityScopedResource() } }
+        try WorkspaceFiles.ensureWorkspaceFiles(at: workspace, settings: settings)
+        let template = try templateURL(kind: .resume, settings: settings)
+        let resumeSlug = WorkspaceFiles.slug(from: masterResume.name, fallback: masterResume.id.uuidString.lowercased())
+        let outputFolder = workspace
+            .appendingPathComponent(WorkspaceFiles.masterResumesDirectory, isDirectory: true)
+            .appendingPathComponent(resumeSlug, isDirectory: true)
+        try FileManager.default.createDirectory(at: outputFolder, withIntermediateDirectories: true)
+        let personSlug = slug(from: profile.fullName.trimmed.isEmpty ? "Applicant" : profile.fullName)
+        let baseName = "\(personSlug)_Resume_\(slug(from: masterResume.displayTitle))"
+        let texURL = outputFolder.appendingPathComponent("\(baseName).tex")
+        let pdfURL = outputFolder.appendingPathComponent("\(baseName).pdf")
+        if FileManager.default.fileExists(atPath: texURL.path) {
+            try FileManager.default.removeItem(at: texURL)
+        }
+        let templateText = try String(contentsOf: template, encoding: .utf8)
+        let render = ResumeRenderer.render(
+            template: templateText, variantSelections: masterResume.selectedVariantIDs,
+            selectedExperiences: selectedExperiences, selectedProjects: selectedProjects, employments: employments,
+            roleDescriptionOverrides: masterResume.employmentRoleDescriptions,
+            hiddenRoleDescriptions: masterResume.hiddenRoleDescriptionEmploymentIDs,
+            experienceOrder: masterResume.experienceOrder,
+            educationBlock: profile.educationBlock,
+            skillsBlock: masterResume.effectiveSkillsBlock(default: profile.skillsBlock),
+            summary: masterResume.summaryText,
+            sectionOrder: masterResume.sectionOrder)
+        try profile.applying(to: render.rendered).write(to: texURL, atomically: true, encoding: .utf8)
+        try copyResumeClassIfAvailable(templateURL: template, outputFolder: outputFolder)
+        return GeneratedFileResult(texURL: texURL, pdfURL: pdfURL, warnings: render.warnings)
     }
 
     static func saveAIFiles(application: JobApplication, purpose: PromptPurpose,

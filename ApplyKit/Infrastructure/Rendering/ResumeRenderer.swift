@@ -8,13 +8,15 @@ enum ResumeRenderer {
     static func render(template: String, variantSelections: [UUID: UUID],
                        selectedExperiences: [ExperienceBullet], selectedProjects: [ExperienceBullet],
                        employments: [Employment], roleDescriptionOverrides: [UUID: String] = [:],
+                       hiddenRoleDescriptions: Set<UUID> = [],
                        experienceOrder: [UUID] = [],
                        educationBlock: String = "", skillsBlock: String = "", summary: String = "",
                        sectionOrder: [ResumeSectionKind] = ResumeSectionKind.defaultOrder) -> RenderResult {
         let orderIndex = Dictionary(uniqueKeysWithValues: experienceOrder.enumerated().map { ($0.element, $0.offset) })
         let experience = experienceBlock(selectedExperiences: selectedExperiences,
                                          variantSelections: variantSelections, employments: employments,
-                                         roleDescriptionOverrides: roleDescriptionOverrides, orderIndex: orderIndex)
+                                         roleDescriptionOverrides: roleDescriptionOverrides,
+                                         hiddenRoleDescriptions: hiddenRoleDescriptions, orderIndex: orderIndex)
         let projects = projectBlock(selectedProjects: selectedProjects,
                                      variantSelections: variantSelections, employments: employments, orderIndex: orderIndex)
         let sectionBlocks: [ResumeSectionKind: String] = [
@@ -36,7 +38,7 @@ enum ResumeRenderer {
     /// entirely when the application has no summary.
     static func summarySection(_ summary: String) -> String {
         guard !summary.trimmed.isEmpty else { return "" }
-        return wrappedSection(title: "Summary", content: summary)
+        return wrappedSection(title: "Summary", content: smartEscapeLatex(summary))
     }
 
     private static func wrappedSection(title: String, content: String) -> String {
@@ -52,6 +54,7 @@ enum ResumeRenderer {
     static func experienceBlock(selectedExperiences: [ExperienceBullet], variantSelections: [UUID: UUID],
                                  employments: [Employment],
                                  roleDescriptionOverrides: [UUID: String] = [:],
+                                 hiddenRoleDescriptions: Set<UUID> = [],
                                  orderIndex: [UUID: Int] = [:]) -> (block: String, warnings: [String]) {
         guard !selectedExperiences.isEmpty else { return ("% No experience bullets selected.", []) }
         let employmentsByID = Dictionary(uniqueKeysWithValues: employments.map { ($0.id, $0) })
@@ -78,7 +81,9 @@ enum ResumeRenderer {
         for (index, group) in groups.enumerated() {
             if index > 0 { rendered.append("\n\(separator)\n") }
             rendered.append(renderSubsection(employment: group.0, bullets: group.1, variantSelections: variantSelections,
-                                             roleDescriptionOverride: roleDescriptionOverrides[group.0.id]))
+                                             roleDescriptionOverride: roleDescriptionOverrides[group.0.id],
+                                             roleDescriptionHidden: hiddenRoleDescriptions.contains(group.0.id),
+                                             orderIndex: orderIndex))
         }
         var warnings: [String] = []
         if orphanCount > 0 { warnings.append("\(orphanCount) selected experience(s) skipped because they have no employment record.") }
@@ -106,12 +111,31 @@ enum ResumeRenderer {
     }
 
     private static func renderSubsection(employment: Employment, bullets: [ExperienceBullet], variantSelections: [UUID: UUID],
-                                         roleDescriptionOverride: String? = nil) -> String {
+                                         roleDescriptionOverride: String? = nil,
+                                         roleDescriptionHidden: Bool = false,
+                                         orderIndex: [UUID: Int] = [:]) -> String {
         var allItems: [String] = []
         let override = roleDescriptionOverride?.trimmed
-        let roleDescription = (override?.isEmpty == false) ? override! : employment.roleDescription
-        if !roleDescription.trimmed.isEmpty { allItems.append("    \\item \(roleDescription)") }
-        allItems += bullets.map { "    \\item \($0.bulletText(variantID: variantSelections[$0.id]))" }
+        let roleDescription = smartEscapeLatex((override?.isEmpty == false) ? override! : employment.roleDescription)
+        let bulletItems = bullets.map { "    \\item \(smartEscapeLatex($0.bulletText(variantID: variantSelections[$0.id])))" }
+        if roleDescriptionHidden || roleDescription.trimmed.isEmpty {
+            allItems = bulletItems
+        } else {
+            // The role line sits at its stored position among the (already sorted) bullets;
+            // absent from the order, it stays first (key -1 sorts before any bullet).
+            let roleKey = orderIndex[employment.id] ?? -1
+            let roleItem = "    \\item \(roleDescription)"
+            var inserted = false
+            for (bullet, item) in zip(bullets, bulletItems) {
+                let bulletKey = orderIndex[bullet.id] ?? Int.max
+                if !inserted && roleKey < bulletKey {
+                    allItems.append(roleItem)
+                    inserted = true
+                }
+                allItems.append(item)
+            }
+            if !inserted { allItems.append(roleItem) }
+        }
         return """
         \\begin{rSubsection}{\(escapeLatex(employment.companyName))}{\(escapeLatex(employment.dateRangeText()))}{\(escapeLatex(employment.role))}{\(escapeLatex(employment.location))}
         \(allItems.joined(separator: "\n"))
@@ -121,7 +145,7 @@ enum ResumeRenderer {
 
     private static func renderProjectSubsection(project: ExperienceBullet, variantID: UUID?, employment: Employment?) -> String {
         let title = projectTitle(project, employment: employment)
-        let items = project.bulletText(variantID: variantID)
+        let items = smartEscapeLatex(project.bulletText(variantID: variantID))
             .split(separator: "\n").map { String($0).trimmed }.filter { !$0.isEmpty }
             .map { line in line.hasPrefix("\\item") ? "    \(line)" : "    \\item \(line)" }
             .joined(separator: "\n")
@@ -150,5 +174,43 @@ enum ResumeRenderer {
         output = output.replacingOccurrences(of: "~", with: "\\textasciitilde{}")
         output = output.replacingOccurrences(of: "^", with: "\\textasciicircum{}")
         return output.replacingOccurrences(of: sentinel, with: "\\textbackslash{}")
+    }
+
+    private static let autoEscapeTargets: Set<Character> = ["&", "%", "$", "#", "_", "~", "^"]
+
+    /// Escapes LaTeX-special characters that appear bare in freeform prose (bullets, role
+    /// descriptions, summary), without disturbing intentional raw LaTeX: backslash commands
+    /// and `{...}` arguments (e.g. `\ulhref{url}{text}`) are left untouched since neither `\`
+    /// nor braces are auto-escape targets, and a character the user already hand-escaped
+    /// (typed `\%` themselves) is detected via an odd count of preceding backslashes and left
+    /// as-is rather than double-escaped.
+    nonisolated static func smartEscapeLatex(_ value: String) -> String {
+        guard value.contains(where: { autoEscapeTargets.contains($0) }) else { return value }
+        var result = ""
+        result.reserveCapacity(value.count)
+        var precedingBackslashes = 0
+        for ch in value {
+            if ch == "\\" {
+                result.append(ch)
+                precedingBackslashes += 1
+                continue
+            }
+            guard autoEscapeTargets.contains(ch) else {
+                result.append(ch)
+                precedingBackslashes = 0
+                continue
+            }
+            if precedingBackslashes % 2 == 1 {
+                result.append(ch)
+            } else {
+                switch ch {
+                case "~": result.append("\\textasciitilde{}")
+                case "^": result.append("\\textasciicircum{}")
+                default: result.append("\\\(ch)")
+                }
+            }
+            precedingBackslashes = 0
+        }
+        return result
     }
 }

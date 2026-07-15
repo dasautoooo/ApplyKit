@@ -127,6 +127,26 @@ enum WorkspaceSyncService {
         try? writeEmploymentIndex(remainingEmployments, root: root)
     }
 
+    static func persistMasterResume(_ resume: MasterResume, settings: AppSettings) throws {
+        let root = try WorkspaceService.workspaceURL(settings: settings)
+        try writeMasterResumeFile(resume, root: root)
+    }
+
+    /// File-writing core of `persistMasterResume`, callable off the main actor (see `writeApplicationFiles`).
+    nonisolated static func writeMasterResumeFile(_ resume: MasterResume, root: URL) throws {
+        let didStart = root.startAccessingSecurityScopedResource()
+        defer { if didStart { root.stopAccessingSecurityScopedResource() } }
+        try WorkspaceFiles.ensureBaseDirectories(at: root)
+        try YAMLFileStore.write(WorkspaceFiles.masterResumeDTO(from: resume), to: try WorkspaceFiles.fileURLForMasterResume(resume, in: root))
+    }
+
+    static func deleteMasterResumeFile(_ resume: MasterResume, settings: AppSettings?) {
+        guard let settings, settings.hasConfiguredWorkspace, let root = try? WorkspaceService.workspaceURL(settings: settings) else { return }
+        let didStart = root.startAccessingSecurityScopedResource()
+        defer { if didStart { root.stopAccessingSecurityScopedResource() } }
+        if let url = try? WorkspaceFiles.findMasterResumeFile(id: resume.id, in: root) { try? FileManager.default.removeItem(at: url) }
+    }
+
     static func persistPromptTemplate(_ template: PromptTemplate, settings: AppSettings) throws {
         let root = try WorkspaceService.workspaceURL(settings: settings)
         let didStart = root.startAccessingSecurityScopedResource()
@@ -258,6 +278,9 @@ enum WorkspaceSyncService {
         for url in try WorkspaceFiles.yamlFiles(under: root.appendingPathComponent(WorkspaceFiles.promptTemplatesDirectory, isDirectory: true)) {
             store.promptTemplates.append(WorkspaceFiles.makePromptTemplate(from: try YAMLFileStore.read(PromptTemplateFileDTO.self, from: url)))
         }
+        for url in try WorkspaceFiles.masterResumeYAMLFiles(in: root) {
+            store.masterResumes.append(WorkspaceFiles.makeMasterResume(from: try YAMLFileStore.read(MasterResumeFileDTO.self, from: url)))
+        }
         let experienceRoot = root.appendingPathComponent(WorkspaceFiles.experienceBankDirectory, isDirectory: true)
         let employmentRoot = experienceRoot.appendingPathComponent(WorkspaceFiles.employmentsDirectory, isDirectory: true)
         for url in try WorkspaceFiles.yamlFiles(under: employmentRoot) where url.lastPathComponent != WorkspaceFiles.employmentIndexFile {
@@ -309,6 +332,7 @@ enum WorkspaceSyncService {
         for exp in store.experiences { try persistExperience(exp, allExperiences: store.experiences, settings: settings) }
         try writeExperienceIndex(store.experiences, root: root)
         for template in store.promptTemplates { try persistPromptTemplate(template, settings: settings) }
+        for resume in store.masterResumes { try persistMasterResume(resume, settings: settings) }
         for run in store.aiRuns {
             guard let app = store.applications.first(where: { $0.id == run.applicationID }) else { continue }
             try persistAIRun(run, application: app, documents: store.documents.filter { $0.applicationID == app.id }, settings: settings)
@@ -368,6 +392,7 @@ enum WorkspaceSyncService {
     private static func clearStore(_ store: AppDataStore) {
         store.applications = []; store.documents = []; store.aiRuns = []
         store.experiences = []; store.employments = []; store.promptTemplates = []
+        store.masterResumes = []
         store.profile = ResumeProfile()
     }
 
@@ -381,6 +406,7 @@ enum WorkspaceSyncService {
         }
         store.documents.sort { $0.createdAt > $1.createdAt }
         store.promptTemplates.sort { $0.name < $1.name }
+        store.masterResumes.sort { $0.name < $1.name }
         store.aiRuns.sort { $0.createdAt > $1.createdAt }
     }
 
@@ -390,7 +416,8 @@ enum WorkspaceSyncService {
                     root.appendingPathComponent(WorkspaceFiles.profileFile),
                     root.appendingPathComponent(WorkspaceFiles.applicationsDirectory, isDirectory: true),
                     root.appendingPathComponent(WorkspaceFiles.experienceBankDirectory, isDirectory: true),
-                    root.appendingPathComponent(WorkspaceFiles.promptTemplatesDirectory, isDirectory: true)] where FileManager.default.fileExists(atPath: url.path) {
+                    root.appendingPathComponent(WorkspaceFiles.promptTemplatesDirectory, isDirectory: true),
+                    root.appendingPathComponent(WorkspaceFiles.masterResumesDirectory, isDirectory: true)] where FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
         }
     }

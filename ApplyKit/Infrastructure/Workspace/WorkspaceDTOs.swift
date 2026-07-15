@@ -41,6 +41,7 @@ struct ApplicationFileDTO: Codable {
     var referralContact: String; var recruiterContact: String; var nextAction: String; var coverLetterNeeded: Bool
     var selectedExperienceIDs: [String]; var selectedProjectIDs: [String]?; var selectedVariantIDs: [String: String]?
     var selectedRoleDescriptions: [String: String]?
+    var hiddenRoleDescriptions: [String]?
     var experienceOrder: [String]?
     var sectionOrder: [String]?
     var skillsBlock: String?; var summary: String?
@@ -54,6 +55,7 @@ struct ApplicationFileDTO: Codable {
         case coverLetterNeeded = "cover_letter_needed"; case selectedExperienceIDs = "selected_experience_ids"
         case selectedProjectIDs = "selected_project_ids"; case selectedVariantIDs = "selected_variant_ids"
         case selectedRoleDescriptions = "role_descriptions"
+        case hiddenRoleDescriptions = "hidden_role_descriptions"
         case experienceOrder = "experience_order"
         case sectionOrder = "section_order"
         case skillsBlock = "skills_block"; case summary
@@ -148,6 +150,28 @@ struct ExperienceBankIndexDTO: Codable {
 
 struct ExperienceBankIndexEntryDTO: Codable {
     var id: String; var title: String; var company: String; var category: String; var path: String
+}
+
+struct MasterResumeFileDTO: Codable {
+    var id: String; var name: String; var notes: String?
+    var selectedExperienceIDs: [String]; var selectedProjectIDs: [String]?; var selectedVariantIDs: [String: String]?
+    var selectedRoleDescriptions: [String: String]?
+    var hiddenRoleDescriptions: [String]?
+    var experienceOrder: [String]?
+    var sectionOrder: [String]?
+    var skillsBlock: String?; var summary: String?
+    var createdAt: String?; var updatedAt: String?
+    enum CodingKeys: String, CodingKey {
+        case id; case name; case notes
+        case selectedExperienceIDs = "selected_experience_ids"
+        case selectedProjectIDs = "selected_project_ids"; case selectedVariantIDs = "selected_variant_ids"
+        case selectedRoleDescriptions = "role_descriptions"
+        case hiddenRoleDescriptions = "hidden_role_descriptions"
+        case experienceOrder = "experience_order"
+        case sectionOrder = "section_order"
+        case skillsBlock = "skills_block"; case summary
+        case createdAt = "created_at"; case updatedAt = "updated_at"
+    }
 }
 
 struct PromptTemplateFileDTO: Codable {
