@@ -31,6 +31,7 @@ enum WorkflowError: LocalizedError {
     case missingClaudeCLIPath
     case emptyAIResponse
     case invalidAIResponse(String)
+    case aiCommandFailed(backend: String, exitCode: Int32, details: String)
 
     var errorDescription: String? {
         switch self {
@@ -50,6 +51,9 @@ enum WorkflowError: LocalizedError {
             return "The AI command returned an empty response."
         case .invalidAIResponse(let reason):
             return "The AI response could not be used. \(reason)"
+        case .aiCommandFailed(let backend, let exitCode, let details):
+            let suffix = details.isEmpty ? "" : ": \(details)"
+            return "\(backend) exited with code \(exitCode)\(suffix)"
         }
     }
 }

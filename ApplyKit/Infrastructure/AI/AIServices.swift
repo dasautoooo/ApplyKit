@@ -118,7 +118,7 @@ enum CodexService {
             throw WorkflowError.missingCodexPath
         }
 
-        return try await Task.detached {
+        let result = try await Task.detached {
             try ProcessRunner.run(
                 executablePath: path,
                 arguments: ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never", "-"],
@@ -126,6 +126,14 @@ enum CodexService {
                 standardInput: prompt
             )
         }.value
+        guard result.succeeded else {
+            throw WorkflowError.aiCommandFailed(
+                backend: "Codex",
+                exitCode: result.exitCode,
+                details: AIServiceSupport.errorSummary(from: result)
+            )
+        }
+        return result
     }
 }
 
@@ -139,7 +147,7 @@ enum ClaudeService {
     static func runCommand(prompt: String, claudePath: String, workingDirectory: URL?) async throws -> CommandResult {
         let path = claudePath.trimmed
         guard !path.isEmpty else { throw WorkflowError.missingClaudeCLIPath }
-        return try await Task.detached {
+        let result = try await Task.detached {
             try ProcessRunner.run(
                 executablePath: path,
                 arguments: ["-p", "--output-format", "text"],
@@ -147,5 +155,27 @@ enum ClaudeService {
                 standardInput: prompt
             )
         }.value
+        guard result.succeeded else {
+            throw WorkflowError.aiCommandFailed(
+                backend: "Claude",
+                exitCode: result.exitCode,
+                details: AIServiceSupport.errorSummary(from: result)
+            )
+        }
+        return result
+    }
+}
+
+enum AIServiceSupport {
+    /// Condenses a failed CLI run into a short human-readable reason, favouring
+    /// the last error-looking stderr lines over progress/banner output.
+    static func errorSummary(from result: CommandResult) -> String {
+        let lines = result.standardError
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let errorLines = lines.filter { $0.localizedCaseInsensitiveContains("error") }
+        let picked = (errorLines.isEmpty ? lines : errorLines).suffix(2).joined(separator: " ")
+        return String(picked.prefix(300))
     }
 }
