@@ -23,7 +23,7 @@ enum ResumeRenderer {
             .summary: summarySection(summary),
             .education: wrappedSection(title: "Education", content: educationBlock),
             .experience: wrappedSection(title: "Experience", content: experience.block),
-            .projects: wrappedSection(title: "Selected Projects", content: projects.block),
+            .projects: selectedProjects.isEmpty ? "" : wrappedSection(title: "Selected Projects", content: projects.block),
             .skills: wrappedSection(title: "Skills", content: skillsBlock)
         ]
         let sectionsText = sectionOrder
