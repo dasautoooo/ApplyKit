@@ -21,6 +21,7 @@ struct JobApplication: Identifiable, Codable, Hashable {
     var jobDescription: String
     var jdAnalysisText: String
     var curatedSuggestionsData: String
+    var tailoringPlanData: String
     var coverLetterNeeded: Bool
     var selectedExperienceIDsText: String
     var selectedProjectIDsText: String
@@ -59,6 +60,7 @@ struct JobApplication: Identifiable, Codable, Hashable {
         self.jobDescription = ""
         self.jdAnalysisText = ""
         self.curatedSuggestionsData = ""
+        self.tailoringPlanData = ""
         self.coverLetterNeeded = false
         self.selectedExperienceIDsText = ""
         self.selectedProjectIDsText = ""

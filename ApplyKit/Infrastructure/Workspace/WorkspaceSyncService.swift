@@ -82,6 +82,12 @@ enum WorkspaceSyncService {
         if !application.curatedSuggestionsData.isEmpty {
             try application.curatedSuggestionsData.write(to: appFolder.appendingPathComponent(WorkspaceFiles.curatedSuggestionsFile), atomically: true, encoding: .utf8)
         }
+        let tailoringPlanURL = appFolder.appendingPathComponent(WorkspaceFiles.tailoringPlanFile)
+        if application.tailoringPlanData.isEmpty {
+            try? FileManager.default.removeItem(at: tailoringPlanURL)
+        } else {
+            try application.tailoringPlanData.write(to: tailoringPlanURL, atomically: true, encoding: .utf8)
+        }
         try YAMLFileStore.write(WorkspaceFiles.applicationDTO(from: application, documents: documents, appFolder: appFolder), to: appFolder.appendingPathComponent(WorkspaceFiles.applicationFile))
         try YAMLFileStore.write(WorkspaceFiles.manifestDTO(), to: root.appendingPathComponent(WorkspaceFiles.manifestFile))
     }

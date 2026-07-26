@@ -21,6 +21,12 @@ struct ApplicationEditorView: View {
     @State var isCuratingBullets = false
     @State var curatedSuggestions: [CuratedBulletSuggestion] = []
 
+    @State var showTailoringSheet = false
+    @State var tailoringPastedText = ""
+    @State var tailoringPlan: TailoringPlan?
+    @State var tailoringChanges: [TailoringChange] = []
+    @State var isReconcilingTailoring = false
+
     @State var generatingDocumentKind: GeneratedDocumentKind?
     @State var masterResumePendingApply: MasterResume?
     @State var showSaveAsMasterResume = false

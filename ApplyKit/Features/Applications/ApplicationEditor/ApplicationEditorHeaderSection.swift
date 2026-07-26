@@ -38,33 +38,53 @@ extension ApplicationEditorView {
                     .fixedSize()
                     .help("Copy all application info as a prompt you can paste into ChatGPT or Claude")
 
-                    if application.isArchived {
-                        Label("Archived", systemImage: "archivebox")
-                            .foregroundStyle(.secondary)
-
-                        Button {
-                            onRestore()
-                        } label: {
-                            Label("Restore", systemImage: "tray.and.arrow.up")
-                        }
-                    } else {
-                        Button {
-                            onArchive()
-                        } label: {
-                            Label("Archive", systemImage: "archivebox")
-                        }
-                    }
-
-                    Button(role: .destructive) {
-                        onDeleteRequest()
+                    Button {
+                        showTailoringSheet = true
                     } label: {
-                        Label("Delete", systemImage: "trash")
+                        Label("Apply Suggestion", systemImage: "wand.and.stars")
                     }
+                    .help("Paste a ChatGPT tailoring suggestion and apply its changes")
+
+                    // Secondary actions: labeled but smaller than the two primary
+                    // actions above so they read as less important.
+                    HStack(spacing: 6) {
+                        if application.isArchived {
+                            Label("Archived", systemImage: "archivebox")
+                                .foregroundStyle(.secondary)
+
+                            Button {
+                                onRestore()
+                            } label: {
+                                Label("Restore", systemImage: "tray.and.arrow.up")
+                            }
+                            .help("Restore this application")
+                        } else {
+                            Button {
+                                onArchive()
+                            } label: {
+                                Label("Archive", systemImage: "archivebox")
+                            }
+                            .help("Archive this application")
+                        }
+
+                        Button(role: .destructive) {
+                            onDeleteRequest()
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                        .help("Delete this application")
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.bordered)
+                    .padding(.leading, 4)
                 }
             }
 
         }
         .padding(.bottom, 2)
+        .sheet(isPresented: $showTailoringSheet) {
+            tailoringSheet
+        }
     }
 
     var roleForm: some View {
@@ -166,7 +186,11 @@ extension ApplicationEditorView {
         pb.setString(applicationContextText(includeAnalysis: includeAnalysis), forType: .string)
     }
 
-    func applicationContextText(includeAnalysis: Bool) -> String {
+    /// When `includeIDs` is true, each experience bullet is tagged `[id: …]`, each
+    /// project `[id: …]`, and each employment `(employment_id: …)` — so a pasted
+    /// tailoring reply can be reconciled against real ids without duplicating the
+    /// résumé text into a separate pool.
+    func applicationContextText(includeAnalysis: Bool, includeIDs: Bool = false) -> String {
         let profile = store.profile
         let fmt = DateFormatter()
         fmt.dateStyle = .medium
@@ -226,7 +250,7 @@ extension ApplicationEditorView {
                 let body = experienceGroups.map { group -> String in
                     let emp = group.employment!
                     let header = emp.location.trimmed.isEmpty ? emp.summaryLine : "\(emp.summaryLine), \(emp.location)"
-                    var lines = ["#### \(header)"]
+                    var lines = ["#### \(header)" + (includeIDs ? " (employment_id: \(emp.id.uuidString))" : "")]
                     for item in group.items {
                         switch item {
                         case .roleDescription(let employment):
@@ -234,7 +258,8 @@ extension ApplicationEditorView {
                             let role = application.roleDescription(for: employment.id) ?? employment.roleDescription
                             if !role.trimmed.isEmpty { lines.append("- \(role)") }
                         case .bullet(let bullet):
-                            lines.append("- \(bullet.bulletText(variantID: application.selectedVariantID(for: bullet.id)))")
+                            let text = bullet.bulletText(variantID: application.selectedVariantID(for: bullet.id))
+                            lines.append(includeIDs ? "- [id: \(bullet.id.uuidString)] \(text)" : "- \(text)")
                         }
                     }
                     return lines.joined(separator: "\n")
@@ -246,7 +271,8 @@ extension ApplicationEditorView {
             let projects = wordingGroups.filter(\.isProject).flatMap(\.bullets)
             if !projects.isEmpty {
                 let body = projects.map { proj -> String in
-                    let title = proj.resumeDisplayName.trimmed.isEmpty ? proj.displayTitle : proj.resumeDisplayName
+                    let name = proj.resumeDisplayName.trimmed.isEmpty ? proj.displayTitle : proj.resumeDisplayName
+                    let title = includeIDs ? "\(name) [id: \(proj.id.uuidString)]" : name
                     let bulletLines = proj.bulletText(variantID: application.selectedVariantID(for: proj.id))
                         .split(separator: "\n").map { String($0).trimmed }.filter { !$0.isEmpty }
                         .map { "- \($0)" }.joined(separator: "\n")

@@ -288,6 +288,7 @@ extension ApplicationEditorView {
             application.sectionOrderText,
             application.skillsBlockText,
             application.summaryText,
+            application.tailoringPlanData,
             WorkspaceDateCodec.string(from: application.archivedAt) ?? ""
         ].joined(separator: "\u{1F}")
     }

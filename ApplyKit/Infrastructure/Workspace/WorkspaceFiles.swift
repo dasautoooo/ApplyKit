@@ -14,6 +14,7 @@ enum WorkspaceFiles {
     static let notesFile = "notes.md"
     static let jdAnalysisFile = "jd-analysis.md"
     static let curatedSuggestionsFile = "curated-suggestions.json"
+    static let tailoringPlanFile = "tailoring-suggestion.json"
     static let manifestYAML = "manifest.yml"
     static let resumeDirectory = "resume"
     static let coverLetterDirectory = "cover-letter"
@@ -151,6 +152,7 @@ enum WorkspaceFiles {
             app.jdAnalysisText = (try? String(contentsOf: resolve(ap, relativeTo: appFolder), encoding: .utf8)) ?? ""
         }
         app.curatedSuggestionsData = (try? String(contentsOf: appFolder.appendingPathComponent(curatedSuggestionsFile), encoding: .utf8)) ?? ""
+        app.tailoringPlanData = (try? String(contentsOf: appFolder.appendingPathComponent(tailoringPlanFile), encoding: .utf8)) ?? ""
         return app
     }
 

@@ -259,4 +259,108 @@ enum PromptBuilder {
               let rawIDs = json["recommended_ids"] as? [String] else { return [] }
         return rawIDs.compactMap { UUID(uuidString: $0) }.filter { validIDs.contains($0) }
     }
+
+    /// Turns a pasted ChatGPT tailoring suggestion (freeform prose, possibly with
+    /// truncated `"…"` quotes) into a strict `TailoringPlan` JSON object keyed by
+    /// the application's real bullet UUIDs. The candidate pool below carries those
+    /// UUIDs so the model can resolve quotes to ids; anything not addressable by a
+    /// provided id must be dropped rather than invented.
+    /// A flat listing of every selectable bullet with its real UUID, grouped by
+    /// employment (then Projects, then Unassigned). Shared by the reconciliation
+    /// prompt and the editor's "copy tailoring context" so ChatGPT can reference
+    /// exact ids.
+    static func candidateExperiencePool(allExperiences: [ExperienceBullet],
+                                        employments: [Employment]) -> String {
+        let employmentsByID = Dictionary(uniqueKeysWithValues: employments.map { ($0.id, $0) })
+
+        func isProject(_ exp: ExperienceBullet) -> Bool {
+            if exp.isProjectLike { return true }
+            if let id = exp.employmentID, let emp = employmentsByID[id] {
+                return emp.experienceCategory == .project || emp.experienceCategory == .openSource
+            }
+            return false
+        }
+
+        func bulletLine(_ exp: ExperienceBullet) -> String {
+            var line = "- [id: \(exp.id.uuidString)] \(exp.bulletText.trimmed)"
+            let variants = exp.variations
+            if !variants.isEmpty {
+                let vs = variants.map { "\($0.id.uuidString) (\"\($0.displayName)\")" }.joined(separator: ", ")
+                line += "\n    existing variants: \(vs)"
+            }
+            return line
+        }
+
+        let workExperiences = allExperiences.filter { !isProject($0) }
+        let projectExperiences = allExperiences.filter { isProject($0) }
+
+        var poolBlocks: [String] = []
+        for employment in employments.sorted(by: { $0.displayOrder < $1.displayOrder }) {
+            let bullets = workExperiences.filter { $0.employmentID == employment.id }
+            guard !bullets.isEmpty else { continue }
+            let header = "### \(employment.summaryLine) (employment_id: \(employment.id.uuidString))"
+            poolBlocks.append(([header] + bullets.map(bulletLine)).joined(separator: "\n"))
+        }
+        let unassignedWork = workExperiences.filter { $0.employmentID == nil || employmentsByID[$0.employmentID!] == nil }
+        if !unassignedWork.isEmpty {
+            poolBlocks.append((["### Unassigned experience"] + unassignedWork.map(bulletLine)).joined(separator: "\n"))
+        }
+        if !projectExperiences.isEmpty {
+            let lines = projectExperiences.map { exp -> String in
+                let title = exp.resumeDisplayName.trimmed.isEmpty ? exp.displayTitle : exp.resumeDisplayName
+                return "- [id: \(exp.id.uuidString)] (\(title)) \(exp.bulletText.trimmed)"
+            }
+            poolBlocks.append((["### Projects"] + lines).joined(separator: "\n"))
+        }
+        return poolBlocks.isEmpty ? "None." : poolBlocks.joined(separator: "\n\n")
+    }
+
+    static func tailoringReconciliationPrompt(pastedReply: String,
+                                              application: JobApplication,
+                                              allExperiences: [ExperienceBullet],
+                                              employments: [Employment]) -> String {
+        let pool = candidateExperiencePool(allExperiences: allExperiences, employments: employments)
+        let sectionVocab = ResumeSectionKind.defaultOrder.map(\.rawValue).joined(separator: ", ")
+        let currentSelectedWork = application.selectedExperienceIDs.map(\.uuidString).joined(separator: ", ")
+        let currentSelectedProjects = application.selectedProjectIDs.map(\.uuidString).joined(separator: ", ")
+
+        return """
+        You are a precise data-transformation tool for the ApplyKit résumé builder. Convert the pasted tailoring suggestion into a single JSON object describing the exact edits to apply to this application's résumé. Reference bullets ONLY by the ids in the candidate pool below.
+
+        ## Candidate experience pool (the ONLY valid ids)
+        \(pool)
+
+        ## Current application state (the baseline you are editing)
+        - Selected experience ids: \(currentSelectedWork.isEmpty ? "none" : currentSelectedWork)
+        - Selected project ids: \(currentSelectedProjects.isEmpty ? "none" : currentSelectedProjects)
+        - Section-order vocabulary (use these exact strings): \(sectionVocab)
+
+        ## Pasted tailoring suggestion
+        \(pastedReply)
+
+        ---
+
+        Produce the plan as JSON with this schema. Every field is OPTIONAL — include a field ONLY when the suggestion clearly specifies it; omit anything it does not address (an omitted field means "leave unchanged").
+
+        {
+          "summary": "<tailored professional summary text, or omit>",
+          "skills_latex": "<tailored LaTeX skills block, or omit>",
+          "section_order": ["<section names from the vocabulary above>"],
+          "ordered_experience_ids": ["<work-bullet ids to include, in final order>"],
+          "ordered_project_ids": ["<project ids to include, in final order>"],
+          "replacements": [
+            { "experience_id": "<id from the pool>", "text": "<tailored replacement bullet text>", "name": "<short variant label>", "reason": "<why, one line>" }
+          ]
+        }
+
+        Rules:
+        - Use ONLY ids that appear in the candidate pool. If the suggestion references a bullet you cannot confidently match to a pool id (e.g. a truncated quote), leave it out rather than guessing.
+        - `ordered_experience_ids` / `ordered_project_ids` are the FINAL selected sets in the suggestion's stated order; bullets the suggestion drops are simply absent.
+        - Put a bullet in `replacements` only when the suggestion gives new wording for it. A replaced bullet should also appear in the appropriate ordered_* list so it stays selected.
+        - `skills_latex` must be raw LaTeX if provided (do not escape it). `summary` is plain prose.
+        - Do NOT invent experience, metrics, or ids.
+
+        Return ONLY the JSON object — no prose, no markdown fences.
+        """
+    }
 }
