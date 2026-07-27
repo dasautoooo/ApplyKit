@@ -17,6 +17,7 @@ struct ApplicationsWorkspaceView: View {
     @State private var scopeFilter = ApplicationListScope.active.rawValue
     @State private var applicationPendingDeletion: JobApplication?
     @State private var shouldDeleteApplicationSourceFiles = false
+    @State private var showJobURLImport = false
     @State private var sidebarWidth: CGFloat = 360
     @AppStorage("applicationEditor.inspectorVisible") private var isInspectorVisible = true
 
@@ -92,6 +93,8 @@ struct ApplicationsWorkspaceView: View {
         .toolbar {
             ToolbarItem {
                 Menu {
+                    Button("Import from Job URL…") { showJobURLImport = true }
+                    Divider()
                     Button("Blank Application") { addApplication() }
                     if !store.masterResumes.isEmpty {
                         Section("From Master Resume") {
@@ -131,6 +134,15 @@ struct ApplicationsWorkspaceView: View {
                         deletingSourceFiles: shouldDeleteApplicationSourceFiles
                     )
                 }
+            )
+        }
+        .sheet(isPresented: $showJobURLImport) {
+            JobURLImportSheet(
+                settings: settings,
+                masterResumes: store.masterResumes,
+                experiences: store.experiences,
+                existingApplications: store.applications,
+                onCreate: createImportedApplication
             )
         }
     }
@@ -262,9 +274,37 @@ struct ApplicationsWorkspaceView: View {
         if let masterResume {
             application.jobTitle = masterResume.displayTitle
             application.copyResumeContent(from: masterResume)
+            application.sourceMasterResumeID = masterResume.id
         }
         store.applications.insert(application, at: 0)
         persist(application)
+        selectedApplicationID = application.id
+    }
+
+    private func createImportedApplication(
+        from draft: JobImportDraft,
+        masterResume: MasterResume
+    ) throws {
+        var application = JobApplication(
+            companyName: draft.companyName.trimmed,
+            jobTitle: draft.jobTitle.trimmed
+        )
+        application.jobURL = draft.jobURL.trimmed
+        application.location = draft.location.trimmed
+        application.workModeRaw = draft.workModeRaw
+        application.employmentTypeRaw = draft.employmentTypeRaw
+        application.sourceRaw = draft.sourceRaw
+        application.deadline = draft.deadline
+        application.jobDescription = draft.jobDescription.trimmed
+        application.sourceMasterResumeID = masterResume.id
+        application.copyResumeContent(from: masterResume)
+
+        try WorkspaceSyncService.persistApplication(
+            application,
+            documents: [],
+            settings: settings
+        )
+        store.applications.insert(application, at: 0)
         selectedApplicationID = application.id
     }
 

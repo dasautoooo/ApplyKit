@@ -10,7 +10,18 @@
 		D776E7B32FAC5ECF009D6CB1 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = D776E7B22FAC5ECF009D6CB1 /* Yams */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		B10000092FC0000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D776E7872FAC5ECD009D6CB1 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D776E78E2FAC5ECD009D6CB1;
+			remoteInfo = ApplyKit;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		B10000012FC0000000000001 /* ApplyKitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ApplyKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D776E9212FAEEAF8009D6CB1 /* ApplyKit.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ApplyKit.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -25,6 +36,11 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		B10000022FC0000000000001 /* ApplyKitTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ApplyKitTests;
+			sourceTree = "<group>";
+		};
 		D776E7912FAC5ECD009D6CB1 /* ApplyKit */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -36,6 +52,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		B10000042FC0000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D776E78C2FAC5ECD009D6CB1 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -51,13 +74,38 @@
 			isa = PBXGroup;
 			children = (
 				D776E7912FAC5ECD009D6CB1 /* ApplyKit */,
+				B10000022FC0000000000001 /* ApplyKitTests */,
 				D776E9212FAEEAF8009D6CB1 /* ApplyKit.app */,
+				B10000012FC0000000000001 /* ApplyKitTests.xctest */,
 			);
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		B10000082FC0000000000001 /* ApplyKitTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B100000C2FC0000000000001 /* Build configuration list for PBXNativeTarget "ApplyKitTests" */;
+			buildPhases = (
+				B10000032FC0000000000001 /* Sources */,
+				B10000042FC0000000000001 /* Frameworks */,
+				B10000052FC0000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B100000A2FC0000000000001 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				B10000022FC0000000000001 /* ApplyKitTests */,
+			);
+			name = ApplyKitTests;
+			packageProductDependencies = (
+			);
+			productName = ApplyKitTests;
+			productReference = B10000012FC0000000000001 /* ApplyKitTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		D776E78E2FAC5ECD009D6CB1 /* ApplyKit */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = D776E79D2FAC5ECF009D6CB1 /* Build configuration list for PBXNativeTarget "ApplyKit" */;
@@ -91,6 +139,10 @@
 				LastSwiftUpdateCheck = 2640;
 				LastUpgradeCheck = 2640;
 				TargetAttributes = {
+					B10000082FC0000000000001 = {
+						CreatedOnToolsVersion = 26.4.1;
+						TestTargetID = D776E78E2FAC5ECD009D6CB1;
+					};
 					D776E78E2FAC5ECD009D6CB1 = {
 						CreatedOnToolsVersion = 26.4.1;
 					};
@@ -114,11 +166,19 @@
 			projectRoot = "";
 			targets = (
 				D776E78E2FAC5ECD009D6CB1 /* ApplyKit */,
+				B10000082FC0000000000001 /* ApplyKitTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		B10000052FC0000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D776E78D2FAC5ECD009D6CB1 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -129,6 +189,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		B10000032FC0000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D776E78B2FAC5ECD009D6CB1 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -138,7 +205,58 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		B100000A2FC0000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D776E78E2FAC5ECD009D6CB1 /* ApplyKit */;
+			targetProxy = B10000092FC0000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		B10000062FC0000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 64ZYG66RMG;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = im.wut.ApplyKitTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ApplyKit.app/Contents/MacOS/ApplyKit";
+			};
+			name = Debug;
+		};
+		B10000072FC0000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 64ZYG66RMG;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = im.wut.ApplyKitTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ApplyKit.app/Contents/MacOS/ApplyKit";
+			};
+			name = Release;
+		};
 		D776E79E2FAC5ECF009D6CB1 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -167,7 +285,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.9;
+				MARKETING_VERSION = 1.10;
 				PRODUCT_BUNDLE_IDENTIFIER = im.wut.ApplyKit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -212,7 +330,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.9;
+				MARKETING_VERSION = 1.10;
 				PRODUCT_BUNDLE_IDENTIFIER = im.wut.ApplyKit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -348,6 +466,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		B100000C2FC0000000000001 /* Build configuration list for PBXNativeTarget "ApplyKitTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B10000062FC0000000000001 /* Debug */,
+				B10000072FC0000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		D776E78A2FAC5ECD009D6CB1 /* Build configuration list for PBXProject "ApplyKit" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

@@ -264,6 +264,7 @@ extension ApplicationEditorView {
             application.companyName,
             application.jobTitle,
             application.jobURL,
+            application.sourceMasterResumeID?.uuidString ?? "",
             application.location,
             application.workModeRaw,
             application.employmentTypeRaw,

@@ -5,6 +5,7 @@ Native macOS app for job application management. Tracks applications through the
 ## Sections
 
 **Applications** — Create and manage job applications. Each application stores the job description, status, priority, notes, selected experience bullets, and generated documents. From the application editor you can:
+- Import a public job-posting URL, review extracted role details, and create the application from the best-matching master resume
 - Run a JD analysis (sends your full experience bank + JD to the AI backend, returns a structured fit assessment)
 - Get AI-recommended experience bullets (AI picks the most relevant from your bank based on the JD)
 - Refine individual bullets against the JD
@@ -59,6 +60,10 @@ Configure in **Settings** (⌘,):
 ```
 
 All files are plain text; you can read, edit, or version-control them independently of the app.
+
+ApplyKit uses native ports of selected ATS endpoint mappings from
+[`ats-scrapers`](https://github.com/kalil0321/ats-scrapers). See
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for attribution.
 
 ## Customization
 

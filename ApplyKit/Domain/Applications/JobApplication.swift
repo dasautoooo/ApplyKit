@@ -5,6 +5,7 @@ struct JobApplication: Identifiable, Codable, Hashable {
     var companyName: String
     var jobTitle: String
     var jobURL: String
+    var sourceMasterResumeID: UUID?
     var location: String
     var workModeRaw: String
     var employmentTypeRaw: String
@@ -46,6 +47,7 @@ struct JobApplication: Identifiable, Codable, Hashable {
         self.companyName = companyName
         self.jobTitle = jobTitle
         self.jobURL = ""
+        self.sourceMasterResumeID = nil
         self.location = ""
         self.workModeRaw = WorkMode.unknown.rawValue
         self.employmentTypeRaw = EmploymentType.fullTime.rawValue

@@ -36,6 +36,7 @@ struct ApplicationDocumentLinkDTO: Codable {
 
 struct ApplicationFileDTO: Codable {
     var id: String; var companyName: String; var jobTitle: String; var jobURL: String; var location: String
+    var sourceMasterResumeID: String?
     var workMode: String; var employmentType: String; var source: String; var status: String; var priority: String
     var dateSaved: String?; var dateApplied: String?; var deadline: String?
     var referralContact: String; var recruiterContact: String; var nextAction: String; var coverLetterNeeded: Bool
@@ -49,6 +50,7 @@ struct ApplicationFileDTO: Codable {
     var paths: ApplicationPathsDTO; var documents: [ApplicationDocumentLinkDTO]
     enum CodingKeys: String, CodingKey {
         case id; case companyName = "company_name"; case jobTitle = "job_title"; case jobURL = "job_url"
+        case sourceMasterResumeID = "master_resume_id"
         case location; case workMode = "work_mode"; case employmentType = "employment_type"; case source; case status; case priority
         case dateSaved = "date_saved"; case dateApplied = "date_applied"; case deadline
         case referralContact = "referral_contact"; case recruiterContact = "recruiter_contact"; case nextAction = "next_action"

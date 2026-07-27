@@ -105,7 +105,8 @@ enum WorkspaceFiles {
                 status: doc.statusRaw)
         }
         return ApplicationFileDTO(id: application.id.uuidString, companyName: application.companyName, jobTitle: application.jobTitle,
-            jobURL: application.jobURL, location: application.location, workMode: application.workModeRaw,
+            jobURL: application.jobURL, location: application.location,
+            sourceMasterResumeID: application.sourceMasterResumeID?.uuidString, workMode: application.workModeRaw,
             employmentType: application.employmentTypeRaw, source: application.sourceRaw, status: application.statusRaw, priority: application.priorityRaw,
             dateSaved: WorkspaceDateCodec.string(from: application.dateSaved), dateApplied: WorkspaceDateCodec.string(from: application.dateApplied),
             deadline: WorkspaceDateCodec.string(from: application.deadline), referralContact: application.referralContact,
@@ -129,6 +130,7 @@ enum WorkspaceFiles {
             status: ApplicationStatus(rawValue: dto.status) ?? .saved, priority: ApplicationPriority(rawValue: dto.priority) ?? .medium)
         if let id = UUID(uuidString: dto.id) { app.id = id }
         app.jobURL = dto.jobURL; app.location = dto.location; app.workModeRaw = dto.workMode
+        app.sourceMasterResumeID = dto.sourceMasterResumeID.flatMap(UUID.init(uuidString:))
         app.employmentTypeRaw = dto.employmentType; app.sourceRaw = dto.source
         app.dateSaved = WorkspaceDateCodec.date(from: dto.dateSaved) ?? Date()
         app.dateApplied = WorkspaceDateCodec.date(from: dto.dateApplied); app.deadline = WorkspaceDateCodec.date(from: dto.deadline)

@@ -74,6 +74,7 @@ extension ApplicationEditorView {
 
     func applyMasterResume(_ preset: MasterResume) {
         application.copyResumeContent(from: preset)
+        application.sourceMasterResumeID = preset.id
         persistApplicationChanges()
         masterResumePendingApply = nil
         activityMonitor.succeed("Applied \"\(preset.displayTitle)\" to this application.")
