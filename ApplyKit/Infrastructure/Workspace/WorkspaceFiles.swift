@@ -23,10 +23,13 @@ enum WorkspaceFiles {
     static let experienceIndexFile = "index.yml"
     static let employmentsDirectory = "employments"
     static let employmentIndexFile = "index.yml"
+    static let discoveryDirectory = "discovery"
+    static let trackedBoardsFile = "boards.yml"
+    static let discoveredJobsFile = "jobs.yml"
 
     static func manifestDTO() -> WorkspaceManifestDTO {
         WorkspaceManifestDTO(name: "ApplyKit Workspace", schemaVersion: 1,
-            managedDirectories: [applicationsDirectory, experienceBankDirectory, promptTemplatesDirectory, masterResumesDirectory],
+            managedDirectories: [applicationsDirectory, experienceBankDirectory, promptTemplatesDirectory, masterResumesDirectory, discoveryDirectory],
             updatedAt: WorkspaceDateCodec.string(from: Date()) ?? "")
     }
 
@@ -35,7 +38,8 @@ enum WorkspaceFiles {
             root.appendingPathComponent(applicationsDirectory, isDirectory: true),
             root.appendingPathComponent(experienceBankDirectory, isDirectory: true),
             root.appendingPathComponent(promptTemplatesDirectory, isDirectory: true),
-            root.appendingPathComponent(masterResumesDirectory, isDirectory: true)] {
+            root.appendingPathComponent(masterResumesDirectory, isDirectory: true),
+            root.appendingPathComponent(discoveryDirectory, isDirectory: true)] {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         }
     }
@@ -463,6 +467,49 @@ enum WorkspaceFiles {
 
     static func isEmploymentURL(_ url: URL) -> Bool {
         url.path.contains("/\(experienceBankDirectory)/\(employmentsDirectory)/")
+    }
+
+    // MARK: - Discovery
+    static func trackedBoardDTO(from board: TrackedBoard) -> TrackedBoardDTO {
+        TrackedBoardDTO(id: board.id.uuidString, kind: board.kindRaw, slug: board.slug,
+            host: board.host, site: board.site, companyName: board.companyName,
+            titleKeywords: board.titleKeywords, excludeKeywords: board.excludeKeywords,
+            locationKeywords: board.locationKeywords,
+            addedAt: WorkspaceDateCodec.string(from: board.addedAt),
+            lastPolledAt: WorkspaceDateCodec.string(from: board.lastPolledAt))
+    }
+
+    static func makeTrackedBoard(from dto: TrackedBoardDTO) -> TrackedBoard {
+        TrackedBoard(id: UUID(uuidString: dto.id) ?? UUID(), kindRaw: dto.kind, slug: dto.slug,
+            host: dto.host, site: dto.site, companyName: dto.companyName,
+            titleKeywords: dto.titleKeywords ?? [], excludeKeywords: dto.excludeKeywords ?? [],
+            locationKeywords: dto.locationKeywords ?? [],
+            addedAt: WorkspaceDateCodec.date(from: dto.addedAt) ?? Date(),
+            lastPolledAt: WorkspaceDateCodec.date(from: dto.lastPolledAt))
+    }
+
+    static func discoveredJobDTO(from job: DiscoveredJob) -> DiscoveredJobDTO {
+        DiscoveredJobDTO(id: job.id.uuidString, boardID: job.boardID.uuidString, externalID: job.externalID,
+            dedupeKey: job.dedupeKey, title: job.title, companyName: job.companyName, location: job.location,
+            url: job.url, postedAt: WorkspaceDateCodec.string(from: job.postedAt),
+            discoveredAt: WorkspaceDateCodec.string(from: job.discoveredAt), state: job.stateRaw,
+            importedApplicationID: job.importedApplicationID?.uuidString,
+            jobDescription: job.jobDescription.isEmpty ? nil : job.jobDescription,
+            jobDescriptionFetchedAt: WorkspaceDateCodec.string(from: job.jobDescriptionFetchedAt))
+    }
+
+    static func makeDiscoveredJob(from dto: DiscoveredJobDTO) -> DiscoveredJob? {
+        guard let id = UUID(uuidString: dto.id), let boardID = UUID(uuidString: dto.boardID) else { return nil }
+        var job = DiscoveredJob(id: id, boardID: boardID, externalID: dto.externalID, dedupeKey: dto.dedupeKey,
+            title: dto.title, companyName: dto.companyName, location: dto.location, url: dto.url,
+            postedAt: WorkspaceDateCodec.date(from: dto.postedAt),
+            discoveredAt: WorkspaceDateCodec.date(from: dto.discoveredAt) ?? Date(),
+            state: DiscoveryState(rawValue: dto.state) ?? .new,
+            importedApplicationID: dto.importedApplicationID.flatMap(UUID.init(uuidString:)),
+            jobDescription: dto.jobDescription ?? "",
+            jobDescriptionFetchedAt: WorkspaceDateCodec.date(from: dto.jobDescriptionFetchedAt))
+        job.stateRaw = dto.state
+        return job
     }
 
     // MARK: - Profile

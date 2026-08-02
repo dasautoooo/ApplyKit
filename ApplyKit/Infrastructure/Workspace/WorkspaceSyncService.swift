@@ -56,6 +56,28 @@ enum WorkspaceSyncService {
         try YAMLFileStore.write(WorkspaceFiles.manifestDTO(), to: root.appendingPathComponent(WorkspaceFiles.manifestFile))
     }
 
+    static func persistTrackedBoards(_ boards: [TrackedBoard], settings: AppSettings) throws {
+        guard settings.hasConfiguredWorkspace else { return }
+        let root = try WorkspaceService.workspaceURL(settings: settings)
+        let didStart = root.startAccessingSecurityScopedResource()
+        defer { if didStart { root.stopAccessingSecurityScopedResource() } }
+        try WorkspaceFiles.ensureBaseDirectories(at: root)
+        let dto = TrackedBoardsIndexDTO(updatedAt: WorkspaceDateCodec.string(from: Date()),
+            boards: boards.map(WorkspaceFiles.trackedBoardDTO))
+        try YAMLFileStore.write(dto, to: root.appendingPathComponent(WorkspaceFiles.discoveryDirectory, isDirectory: true).appendingPathComponent(WorkspaceFiles.trackedBoardsFile))
+    }
+
+    static func persistDiscoveredJobs(_ jobs: [DiscoveredJob], settings: AppSettings) throws {
+        guard settings.hasConfiguredWorkspace else { return }
+        let root = try WorkspaceService.workspaceURL(settings: settings)
+        let didStart = root.startAccessingSecurityScopedResource()
+        defer { if didStart { root.stopAccessingSecurityScopedResource() } }
+        try WorkspaceFiles.ensureBaseDirectories(at: root)
+        let dto = DiscoveredJobsIndexDTO(updatedAt: WorkspaceDateCodec.string(from: Date()),
+            jobs: jobs.map(WorkspaceFiles.discoveredJobDTO))
+        try YAMLFileStore.write(dto, to: root.appendingPathComponent(WorkspaceFiles.discoveryDirectory, isDirectory: true).appendingPathComponent(WorkspaceFiles.discoveredJobsFile))
+    }
+
     static func persistApplication(_ application: JobApplication, documents: [GeneratedDocument], settings: AppSettings) throws {
         let root = try WorkspaceService.workspaceURL(settings: settings)
         try writeApplicationFiles(application, documents: documents, root: root)
@@ -318,6 +340,15 @@ enum WorkspaceSyncService {
         if FileManager.default.fileExists(atPath: profileURL.path) {
             store.profile = WorkspaceFiles.makeProfile(from: try YAMLFileStore.read(ResumeProfileDTO.self, from: profileURL))
         }
+        let discoveryRoot = root.appendingPathComponent(WorkspaceFiles.discoveryDirectory, isDirectory: true)
+        let boardsURL = discoveryRoot.appendingPathComponent(WorkspaceFiles.trackedBoardsFile)
+        if let dto = try? YAMLFileStore.read(TrackedBoardsIndexDTO.self, from: boardsURL) {
+            store.trackedBoards = dto.boards.map(WorkspaceFiles.makeTrackedBoard)
+        }
+        let jobsURL = discoveryRoot.appendingPathComponent(WorkspaceFiles.discoveredJobsFile)
+        if let dto = try? YAMLFileStore.read(DiscoveredJobsIndexDTO.self, from: jobsURL) {
+            store.discoveredJobs = dto.jobs.compactMap(WorkspaceFiles.makeDiscoveredJob)
+        }
         sortStore(store)
         try writeExperienceIndex(store.experiences, root: root)
         try writeEmploymentIndex(store.employments, root: root)
@@ -343,6 +374,8 @@ enum WorkspaceSyncService {
             guard let app = store.applications.first(where: { $0.id == run.applicationID }) else { continue }
             try persistAIRun(run, application: app, documents: store.documents.filter { $0.applicationID == app.id }, settings: settings)
         }
+        try persistTrackedBoards(store.trackedBoards, settings: settings)
+        try persistDiscoveredJobs(store.discoveredJobs, settings: settings)
     }
 
     nonisolated private static func writeExperienceIndex(_ experiences: [ExperienceBullet], root: URL) throws {
@@ -399,6 +432,7 @@ enum WorkspaceSyncService {
         store.applications = []; store.documents = []; store.aiRuns = []
         store.experiences = []; store.employments = []; store.promptTemplates = []
         store.masterResumes = []
+        store.trackedBoards = []; store.discoveredJobs = []
         store.profile = ResumeProfile()
     }
 
@@ -423,7 +457,8 @@ enum WorkspaceSyncService {
                     root.appendingPathComponent(WorkspaceFiles.applicationsDirectory, isDirectory: true),
                     root.appendingPathComponent(WorkspaceFiles.experienceBankDirectory, isDirectory: true),
                     root.appendingPathComponent(WorkspaceFiles.promptTemplatesDirectory, isDirectory: true),
-                    root.appendingPathComponent(WorkspaceFiles.masterResumesDirectory, isDirectory: true)] where FileManager.default.fileExists(atPath: url.path) {
+                    root.appendingPathComponent(WorkspaceFiles.masterResumesDirectory, isDirectory: true),
+                    root.appendingPathComponent(WorkspaceFiles.discoveryDirectory, isDirectory: true)] where FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
         }
     }

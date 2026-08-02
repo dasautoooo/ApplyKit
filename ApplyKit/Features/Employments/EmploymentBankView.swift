@@ -21,13 +21,18 @@ struct EmploymentBankView: View {
             minWidth: 320,
             maxWidth: 440
         ) {
-            List(selection: $selectedID) {
+            SelectableList(selection: $selectedID,
+                           orderedIDs: store.employments.map(\.id),
+                           onDelete: { if let selectedEmployment { requestDelete(selectedEmployment) } }) {
                 ForEach(store.employments) { employment in
                     EmploymentSummaryRow(
                         employment: employment,
                         attachedBulletCount: bulletCount(for: employment)
                     )
-                    .tag(employment.id)
+                    .selectableRow(isSelected: selectedID == employment.id) {
+                        selectedID = employment.id
+                    }
+                    .id(employment.id)
                     .contextMenu {
                         Button(role: .destructive) {
                             requestDelete(employment)
@@ -37,7 +42,6 @@ struct EmploymentBankView: View {
                     }
                 }
             }
-            .scrollContentBackground(.hidden)
             .background(Color(nsColor: .controlBackgroundColor))
         } detail: {
             if let selectedEmployment {

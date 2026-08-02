@@ -205,6 +205,42 @@ struct ActivityLogDTO: Codable {
     enum CodingKeys: String, CodingKey { case updatedAt = "updated_at"; case entries }
 }
 
+struct TrackedBoardDTO: Codable {
+    var id: String; var kind: String; var slug: String; var host: String?; var site: String?
+    var companyName: String; var titleKeywords: [String]?; var excludeKeywords: [String]?
+    var locationKeywords: [String]?; var addedAt: String?; var lastPolledAt: String?
+    enum CodingKeys: String, CodingKey {
+        case id; case kind; case slug; case host; case site
+        case companyName = "company_name"; case titleKeywords = "title_keywords"
+        case excludeKeywords = "exclude_keywords"; case locationKeywords = "location_keywords"
+        case addedAt = "added_at"; case lastPolledAt = "last_polled_at"
+    }
+}
+
+struct TrackedBoardsIndexDTO: Codable {
+    var updatedAt: String?; var boards: [TrackedBoardDTO]
+    enum CodingKeys: String, CodingKey { case updatedAt = "updated_at"; case boards }
+}
+
+struct DiscoveredJobDTO: Codable {
+    var id: String; var boardID: String; var externalID: String; var dedupeKey: String
+    var title: String; var companyName: String; var location: String; var url: String
+    var postedAt: String?; var discoveredAt: String?; var state: String; var importedApplicationID: String?
+    var jobDescription: String?; var jobDescriptionFetchedAt: String?
+    enum CodingKeys: String, CodingKey {
+        case id; case boardID = "board_id"; case externalID = "external_id"; case dedupeKey = "dedupe_key"
+        case title; case companyName = "company_name"; case location; case url
+        case postedAt = "posted_at"; case discoveredAt = "discovered_at"; case state
+        case importedApplicationID = "imported_application_id"
+        case jobDescription = "job_description"; case jobDescriptionFetchedAt = "job_description_fetched_at"
+    }
+}
+
+struct DiscoveredJobsIndexDTO: Codable {
+    var updatedAt: String?; var jobs: [DiscoveredJobDTO]
+    enum CodingKeys: String, CodingKey { case updatedAt = "updated_at"; case jobs }
+}
+
 struct ResumeProfileDTO: Codable {
     var fullName: String; var city: String; var phone: String; var email: String
     var linkedin: String; var github: String; var website: String

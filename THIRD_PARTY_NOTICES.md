@@ -5,6 +5,20 @@
 ApplyKit's ATS-specific endpoint resolution and field mappings are adapted from
 [kalil0321/ats-scrapers](https://github.com/kalil0321/ats-scrapers).
 
+Specifically, the following are ports or adaptations of that project's work:
+
+- The Workday pagination algorithm in
+  `ApplyKit/Infrastructure/Discovery/Providers/WorkdayProvider.swift` — the
+  20-item page cap, the 2000-result query cap with recursive facet subdivision
+  (`jobFamilyGroup` → `timeType` → `locations` → `workerSubType`), and the
+  per-job detail enrichment that resolves `"N Locations"` rollups — is ported
+  from `src/ats_scrapers/scrapers/workday.py`.
+- Job-board list endpoints and response field mappings for Greenhouse, Lever,
+  Ashby, SmartRecruiters, Workable, Recruitee, Personio, BambooHR, Breezy,
+  JazzHR, and Teamtailor.
+- Career-site endpoints and field mappings for Amazon, Apple, Uber, TikTok,
+  ByteDance, Google, Tesla, and Meta.
+
 MIT License
 
 Copyright (c) 2026 Kalil Bouzigues

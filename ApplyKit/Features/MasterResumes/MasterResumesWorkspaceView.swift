@@ -21,10 +21,15 @@ struct MasterResumesWorkspaceView: View {
             maxWidth: 400
         ) {
             VStack(spacing: 0) {
-                List(selection: $selectedMasterResumeID) {
+                SelectableList(selection: $selectedMasterResumeID,
+                               orderedIDs: store.masterResumes.map(\.id),
+                               onDelete: { masterResumePendingDeletion = selectedMasterResume }) {
                     ForEach(store.masterResumes) { masterResume in
                         MasterResumeRow(masterResume: masterResume)
-                            .tag(masterResume.id)
+                            .selectableRow(isSelected: selectedMasterResumeID == masterResume.id) {
+                                selectedMasterResumeID = masterResume.id
+                            }
+                            .id(masterResume.id)
                             .contextMenu {
                                 Button {
                                     duplicate(masterResume)
@@ -42,8 +47,6 @@ struct MasterResumesWorkspaceView: View {
                             }
                     }
                 }
-                .listStyle(.sidebar)
-                .scrollContentBackground(.hidden)
             }
             .background(Color(nsColor: .controlBackgroundColor))
         } detail: {

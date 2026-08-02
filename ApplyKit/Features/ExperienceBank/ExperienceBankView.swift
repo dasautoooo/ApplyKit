@@ -30,30 +30,33 @@ struct ExperienceBankView: View {
             VStack(spacing: 0) {
                 filterPanel
 
-                List(selection: $selectedID) {
+                SelectableList(selection: $selectedID,
+                               orderedIDs: groupedExperiences.flatMap { $0.items.map(\.id) },
+                               onDelete: { if let selectedExperience { requestDelete(selectedExperience) } }) {
                     ForEach(groupedExperiences) { group in
-                        Section(group.title) {
-                            ForEach(group.items) { experience in
-                                ExperienceSummaryRow(experience: experience)
-                                    .tag(experience.id)
-                                    .contextMenu {
-                                        Button {
-                                            duplicate(experience)
-                                        } label: {
-                                            Label("Duplicate", systemImage: "doc.on.doc")
-                                        }
-
-                                        Button(role: .destructive) {
-                                            requestDelete(experience)
-                                        } label: {
-                                            Label("Delete", systemImage: "trash")
-                                        }
+                        SelectableListSectionHeader(title: group.title)
+                        ForEach(group.items) { experience in
+                            ExperienceSummaryRow(experience: experience)
+                                .selectableRow(isSelected: selectedID == experience.id) {
+                                    selectedID = experience.id
+                                }
+                                .id(experience.id)
+                                .contextMenu {
+                                    Button {
+                                        duplicate(experience)
+                                    } label: {
+                                        Label("Duplicate", systemImage: "doc.on.doc")
                                     }
-                            }
+
+                                    Button(role: .destructive) {
+                                        requestDelete(experience)
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
                         }
                     }
                 }
-                .scrollContentBackground(.hidden)
             }
             .background(Color(nsColor: .controlBackgroundColor))
         } detail: {

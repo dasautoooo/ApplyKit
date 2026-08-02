@@ -30,7 +30,9 @@ struct ApplicationsWorkspaceView: View {
             VStack(spacing: 0) {
                 filterBar
 
-                List(selection: $selectedApplicationID) {
+                SelectableList(selection: $selectedApplicationID,
+                               orderedIDs: filteredApplications.map(\.id),
+                               onDelete: { if let selected = selectedApplication { requestDelete(selected) } }) {
                     let flags = documentFlags
                     ForEach(filteredApplications) { application in
                         ApplicationRow(
@@ -38,7 +40,10 @@ struct ApplicationsWorkspaceView: View {
                             hasResume: flags[application.id]?.resume ?? false,
                             hasCoverLetter: flags[application.id]?.coverLetter ?? false
                         )
-                        .tag(application.id)
+                        .selectableRow(isSelected: selectedApplicationID == application.id) {
+                            selectedApplicationID = application.id
+                        }
+                        .id(application.id)
                         .contextMenu {
                             if application.isArchived {
                                 Button {
@@ -69,10 +74,7 @@ struct ApplicationsWorkspaceView: View {
                             }
                         }
                     }
-                    .onDelete(perform: requestDeleteApplications)
                 }
-                .listStyle(.sidebar)
-                .scrollContentBackground(.hidden)
             }
             .background(Color(nsColor: .controlBackgroundColor))
         } detail: {
@@ -327,10 +329,6 @@ struct ApplicationsWorkspaceView: View {
         selectedApplicationID = copy.id
     }
 
-    private func requestDeleteApplications(offsets: IndexSet) {
-        guard let index = offsets.first else { return }
-        requestDelete(filteredApplications[index])
-    }
 
     private func archive(_ application: JobApplication) {
         guard let idx = store.applications.firstIndex(where: { $0.id == application.id }) else { return }

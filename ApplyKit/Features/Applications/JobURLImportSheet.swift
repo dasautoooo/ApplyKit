@@ -9,6 +9,8 @@ struct JobURLImportSheet: View {
     let masterResumes: [MasterResume]
     let experiences: [ExperienceBullet]
     let existingApplications: [JobApplication]
+    /// Prefills the URL field (e.g. when importing a discovered posting).
+    var initialURL: String = ""
     let onCreate: (JobImportDraft, MasterResume) throws -> Void
 
     @State private var urlText = ""
@@ -44,6 +46,7 @@ struct JobURLImportSheet: View {
             footer
         }
         .frame(minWidth: 720, idealWidth: 780, minHeight: 620, idealHeight: 760)
+        .onAppear { if urlText.isEmpty, !initialURL.isEmpty { urlText = initialURL } }
     }
 
     private var header: some View {

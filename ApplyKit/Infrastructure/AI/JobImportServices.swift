@@ -348,9 +348,12 @@ enum HTMLJobExtractor {
             .replacing(pattern: #"(?is)<style\b[^>]*>.*?</style>"#, with: " ")
             .replacing(pattern: #"(?is)<noscript\b[^>]*>.*?</noscript>"#, with: " ")
         let text = withoutNoise
+            // Turn block-level boundaries into newlines so paragraphs, list items,
+            // and headings survive tag-stripping (readable text + better AI input).
+            .replacing(pattern: #"(?is)</?(?:br|p|div|li|ul|ol|h[1-6]|tr|table|section|article|header|footer)[^>]*>"#, with: "\n")
             .replacing(pattern: #"(?s)<[^>]+>"#, with: " ")
             .decodingBasicHTMLEntities()
-            .collapsingWhitespace()
+            .collapsingWhitespace(preservingNewlines: true)
 
         return JobPageContent(
             sourceURL: url,

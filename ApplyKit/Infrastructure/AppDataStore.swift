@@ -43,5 +43,7 @@ struct ResumeProfile {
     var promptTemplates: [PromptTemplate]    = []
     var masterResumes:   [MasterResume]      = []
     var aiRuns:          [AIRun]             = []
+    var trackedBoards:   [TrackedBoard]      = []
+    var discoveredJobs:  [DiscoveredJob]     = []
     var profile:         ResumeProfile       = ResumeProfile()
 }
