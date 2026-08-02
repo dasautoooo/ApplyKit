@@ -40,7 +40,8 @@ final class JobImportCoordinator {
             metadataDescription: "",
             jobPostingJSON: "",
             visibleText: String(description.prefix(80_000)),
-            wasRendered: false
+            wasRendered: false,
+            canonicalDescription: String(description.prefix(80_000))
         )
         return try await interpret(
             content: content,
@@ -69,7 +70,8 @@ final class JobImportCoordinator {
             response,
             submittedURL: submittedURL,
             wasRendered: content.wasRendered,
-            validMasterResumeIDs: Set(masterResumes.map(\.id))
+            validMasterResumeIDs: Set(masterResumes.map(\.id)),
+            canonicalDescription: content.canonicalDescription
         )
     }
 }
@@ -98,6 +100,23 @@ enum JobImportPromptBuilder {
             """
         }.joined(separator: "\n\n---\n\n")
 
+        // Re-emitting the description dominates the round trip — thousands of
+        // generated tokens versus a few dozen for the classification fields. When
+        // the body is already clean (ATS API, pasted text) we keep it verbatim
+        // and ask only for the fields the model actually has to reason about.
+        let hasCanonicalDescription = !content.canonicalDescription.trimmed.isEmpty
+        let descriptionField = hasCanonicalDescription
+            ? ""
+            : "\n  \"job_description\": \"clean, complete plain-text job description\","
+        let descriptionRules = hasCanonicalDescription
+            ? """
+              - The job description is already clean and is kept verbatim. Do NOT return a job_description field.
+              """
+            : """
+              - Preserve the actual responsibilities, qualifications, and company context in job_description.
+              - Remove navigation, cookie notices, repeated headers, unrelated jobs, and application-site chrome.
+              """
+
         return """
         You extract job-posting data and recommend the candidate's closest existing master resume.
 
@@ -116,8 +135,7 @@ enum JobImportPromptBuilder {
           "work_mode": "Unknown|Remote|Hybrid|Onsite",
           "employment_type": "Unknown|Full-time|Contract|Internship|Co-op",
           "deadline": "YYYY-MM-DD or null",
-          "source": "LinkedIn|Company Website|Other",
-          "job_description": "clean, complete plain-text job description",
+          "source": "LinkedIn|Company Website|Other",\(descriptionField)
           "master_resume_matches": [
             {
               "master_resume_id": "exact UUID from catalogue",
@@ -128,8 +146,7 @@ enum JobImportPromptBuilder {
         }
 
         Requirements:
-        - Preserve the actual responsibilities, qualifications, and company context in job_description.
-        - Remove navigation, cookie notices, repeated headers, unrelated jobs, and application-site chrome.
+        \(descriptionRules)
         - Return up to three master-resume matches, best first.
         - Confidence is 0.0 through 1.0 and reflects evidence in the posting versus the preset.
         - Use only exact master-resume UUIDs from the catalogue.
@@ -163,11 +180,14 @@ enum JobImportPromptBuilder {
 }
 
 enum JobImportResponseParser {
+    /// `canonicalDescription`, when non-empty, is the posting body the prompt kept
+    /// verbatim rather than asking the model to re-emit (see JobPageContent).
     static func parse(
         _ response: String,
         submittedURL: String,
         wasRendered: Bool,
-        validMasterResumeIDs: Set<UUID>
+        validMasterResumeIDs: Set<UUID>,
+        canonicalDescription: String = ""
     ) throws -> JobImportDraft {
         guard let start = response.firstIndex(of: "{"),
               let end = response.lastIndex(of: "}"),
@@ -177,7 +197,12 @@ enum JobImportResponseParser {
             throw JobImportError.invalidAIResponse
         }
 
-        let description = (object["job_description"] as? String ?? "").trimmed
+        // Prefer the verbatim body. A model that returns job_description anyway
+        // (despite being told not to) is ignored rather than trusted over it.
+        let canonical = canonicalDescription.trimmed
+        let description = canonical.isEmpty
+            ? (object["job_description"] as? String ?? "").trimmed
+            : canonical
         guard description.count >= 80 else { throw JobImportError.invalidAIResponse }
 
         let workMode = enumValue(

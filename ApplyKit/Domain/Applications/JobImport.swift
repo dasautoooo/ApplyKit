@@ -7,6 +7,12 @@ struct JobPageContent: Sendable {
     var jobPostingJSON: String
     var visibleText: String
     var wasRendered: Bool
+    /// The posting body when it arrived already clean — an ATS API's own
+    /// description field, or text the user pasted. Non-empty means the AI is
+    /// asked to classify the posting *without* re-emitting the description,
+    /// which is by far the slowest part of the import (it otherwise has to
+    /// generate several thousand tokens of text we already hold verbatim).
+    var canonicalDescription: String = ""
 
     var isLikelyUsable: Bool {
         jobPostingJSON.localizedCaseInsensitiveContains("JobPosting")

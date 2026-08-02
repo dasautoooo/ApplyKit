@@ -101,6 +101,8 @@ final class JobPageScraper {
         if ats.visibleText.count > page.visibleText.count / 2 {
             merged.visibleText = ats.visibleText
         }
+        // The scraped page never yields a canonical body; only the ATS does.
+        merged.canonicalDescription = ats.canonicalDescription
         return merged
     }
 }
@@ -322,7 +324,10 @@ enum ATSJobAPIResolver {
             metadataDescription: "ATS: \(request.kind.rawValue); company identifier: \(companyHint)",
             jobPostingJSON: String(json.prefix(70_000)),
             visibleText: String(description.prefix(80_000)),
-            wasRendered: false
+            wasRendered: false,
+            // The ATS handed us the posting body directly, so it needs no
+            // AI cleanup — only the surrounding chrome-free HTML strip above.
+            canonicalDescription: String(description.prefix(80_000))
         )
     }
 

@@ -160,6 +160,56 @@ final class JobImportTests: XCTestCase {
         XCTAssertEqual(result.sourceRaw, ApplicationSource.linkedin.rawValue)
     }
 
+    /// When the ATS already gave us a clean body the prompt omits `job_description`,
+    /// so the parser must supply it — and must keep the verbatim text even if the
+    /// model returns a (paraphrased) one anyway.
+    func testCanonicalDescriptionIsUsedInsteadOfTheModelsEcho() throws {
+        let resumeID = UUID()
+        let canonical = String(repeating: "Canonical Workday posting body. ", count: 8)
+
+        let omitted = """
+        {
+          "company_name": "Autodesk",
+          "job_title": "Software Engineer, Education",
+          "location": "Toronto, ON",
+          "work_mode": "Hybrid",
+          "employment_type": "Full-time",
+          "deadline": null,
+          "source": "Company Website",
+          "master_resume_matches": []
+        }
+        """
+        let fromOmitted = try JobImportResponseParser.parse(
+            omitted,
+            submittedURL: "https://autodesk.wd1.myworkdayjobs.com/Ext/job/x",
+            wasRendered: false,
+            validMasterResumeIDs: [resumeID],
+            canonicalDescription: canonical
+        )
+        XCTAssertEqual(fromOmitted.jobDescription, canonical.trimmed)
+        XCTAssertEqual(fromOmitted.jobTitle, "Software Engineer, Education")
+
+        let echoed = try JobImportResponseParser.parse(
+            responseJSON(firstID: resumeID, firstConfidence: 0.9,
+                         secondID: UUID(), secondConfidence: 0.1),
+            submittedURL: "https://autodesk.wd1.myworkdayjobs.com/Ext/job/x",
+            wasRendered: false,
+            validMasterResumeIDs: [resumeID],
+            canonicalDescription: canonical
+        )
+        XCTAssertEqual(echoed.jobDescription, canonical.trimmed)
+
+        // Generic HTML scrapes have no canonical body, so the model's text stands.
+        let scraped = try JobImportResponseParser.parse(
+            responseJSON(firstID: resumeID, firstConfidence: 0.9,
+                         secondID: UUID(), secondConfidence: 0.1),
+            submittedURL: "https://example.com/job",
+            wasRendered: false,
+            validMasterResumeIDs: [resumeID]
+        )
+        XCTAssertTrue(scraped.jobDescription.hasPrefix("This is a sufficiently complete"))
+    }
+
     func testMasterResumeProvenanceRoundTripsThroughWorkspaceDTO() throws {
         let masterID = UUID()
         var application = JobApplication(companyName: "Example", jobTitle: "Engineer")
