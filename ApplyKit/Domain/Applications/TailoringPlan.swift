@@ -24,6 +24,9 @@ struct TailoringPlan: Codable, Equatable {
     var orderedProjectIDs: [UUID]?
     /// Per-bullet tailored rewrites, applied as selected variants.
     var replacements: [Replacement]?
+    /// Per-employment role-description decisions: whether to show the line and/or
+    /// reword it.
+    var roleDescriptions: [RoleDescription]?
 
     struct Replacement: Codable, Equatable {
         var experienceID: UUID
@@ -39,6 +42,21 @@ struct TailoringPlan: Codable, Equatable {
         }
     }
 
+    /// A decision about an employment's role-description line. `include` toggles
+    /// visibility (omit = leave as-is); `text` supplies a tailored override
+    /// (omit = keep current wording).
+    struct RoleDescription: Codable, Equatable {
+        var employmentID: UUID
+        var include: Bool?
+        var text: String?
+
+        enum CodingKeys: String, CodingKey {
+            case employmentID = "employment_id"
+            case include
+            case text
+        }
+    }
+
     enum CodingKeys: String, CodingKey {
         case summary
         case skillsLatex = "skills_latex"
@@ -46,6 +64,7 @@ struct TailoringPlan: Codable, Equatable {
         case orderedExperienceIDs = "ordered_experience_ids"
         case orderedProjectIDs = "ordered_project_ids"
         case replacements
+        case roleDescriptions = "role_descriptions"
     }
 }
 
@@ -66,7 +85,7 @@ extension TailoringPlan {
     var isEmpty: Bool {
         summary == nil && skillsLatex == nil && sectionOrder == nil
             && orderedExperienceIDs == nil && orderedProjectIDs == nil
-            && (replacements?.isEmpty ?? true)
+            && (replacements?.isEmpty ?? true) && (roleDescriptions?.isEmpty ?? true)
     }
 
     private static func stripCodeFence(_ value: String) -> String {

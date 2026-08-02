@@ -20,6 +20,9 @@ struct TailoringChange: Identifiable {
         /// `nil` dimension = leave that dimension's selection/order unchanged.
         case selection(work: [UUID]?, projects: [UUID]?)
         case replacement(ResolvedReplacement)
+        /// Per-employment role-description line: `include` toggles visibility
+        /// (nil = leave as-is), `text` overrides the wording (nil = keep current).
+        case roleDescription(employmentID: UUID, include: Bool?, text: String?)
     }
 
     let id: String
@@ -218,23 +221,71 @@ extension ApplicationEditorView {
                 ))
                 continue
             }
+            // "Current" reflects the wording this application actually renders —
+            // the selected variant, not the shared base text.
+            let currentText = bullet.bulletText(variantID: application.selectedVariantID(for: bullet.id))
             let resolved = ResolvedReplacement(
                 experienceID: bullet.id,
                 text: replacement.text,
                 name: replacement.name?.trimmed.isEmpty == false ? replacement.name!.trimmed
                     : ExperienceVariation.defaultName(existing: bullet.variations),
                 reason: replacement.reason ?? "",
-                originalText: bullet.bulletText,
+                originalText: currentText,
                 isProject: isProjectLikeSelection(bullet)
             )
             changes.append(TailoringChange(
                 id: id,
                 title: "Rewrite: \(bullet.displayTitle)",
                 detail: replacement.reason ?? "Tailored wording for this bullet.",
-                before: bullet.bulletText,
+                before: currentText,
                 after: replacement.text,
                 blockedReason: nil,
                 action: .replacement(resolved),
+                applied: applied(id)
+            ))
+        }
+
+        for role in plan.roleDescriptions ?? [] {
+            let id = "role:\(role.employmentID.uuidString)"
+            guard let employment = employments.first(where: { $0.id == role.employmentID }) else {
+                changes.append(TailoringChange(
+                    id: id,
+                    title: "Role description",
+                    detail: "The referenced employment no longer exists.",
+                    before: nil,
+                    after: nil,
+                    blockedReason: "Employment id not found — it may have changed since you copied the context.",
+                    action: .roleDescription(employmentID: role.employmentID, include: role.include, text: role.text),
+                    applied: false
+                ))
+                continue
+            }
+            let currentlyHidden = application.isRoleDescriptionHidden(for: employment.id)
+            let currentText = (application.roleDescription(for: employment.id) ?? employment.roleDescription).trimmed
+            let newText = role.text?.trimmed
+            let textChanges = (newText?.isEmpty == false) && newText! != currentText
+            // `include == currentlyHidden` is true exactly when the requested
+            // visibility differs from the current state (want-shown while hidden,
+            // or want-hidden while shown).
+            let inclusionChanges = role.include.map { $0 == currentlyHidden } ?? false
+            guard textChanges || inclusionChanges else { continue }
+
+            var detailParts: [String] = []
+            if inclusionChanges { detailParts.append(role.include == true ? "Show the role-description line" : "Hide the role-description line") }
+            if textChanges { detailParts.append("Update the role-description wording") }
+
+            let afterText: String
+            if textChanges { afterText = newText! }
+            else { afterText = role.include == true ? "(show role description)" : "(hide role description)" }
+
+            changes.append(TailoringChange(
+                id: id,
+                title: "Role description: \(employment.companyName)",
+                detail: detailParts.joined(separator: "; ") + ".",
+                before: currentText.isEmpty ? (currentlyHidden ? "(hidden)" : nil) : "\(currentlyHidden ? "(hidden) " : "")\(currentText)",
+                after: afterText,
+                blockedReason: nil,
+                action: .roleDescription(employmentID: employment.id, include: role.include, text: newText),
                 applied: applied(id)
             ))
         }
@@ -257,6 +308,13 @@ extension ApplicationEditorView {
             applySelection(work: work, projects: projects)
         case .replacement(let replacement):
             applyReplacement(replacement)
+        case .roleDescription(let employmentID, let include, let text):
+            if let text, !text.trimmed.isEmpty {
+                application.setRoleDescription(text, for: employmentID)
+            }
+            if let include {
+                application.setRoleDescriptionHidden(!include, for: employmentID)
+            }
         }
         markApplied(change.id)
         persistApplicationChanges()

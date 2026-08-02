@@ -323,6 +323,15 @@ enum PromptBuilder {
         let sectionVocab = ResumeSectionKind.defaultOrder.map(\.rawValue).joined(separator: ", ")
         let currentSelectedWork = application.selectedExperienceIDs.map(\.uuidString).joined(separator: ", ")
         let currentSelectedProjects = application.selectedProjectIDs.map(\.uuidString).joined(separator: ", ")
+        let roleDescriptions = employments
+            .sorted { $0.displayOrder < $1.displayOrder }
+            .compactMap { emp -> String? in
+                let text = (application.roleDescription(for: emp.id) ?? emp.roleDescription).trimmed
+                guard !text.isEmpty else { return nil }
+                let state = application.isRoleDescriptionHidden(for: emp.id) ? "currently HIDDEN" : "currently SHOWN"
+                return "- (employment_id: \(emp.id.uuidString)) [\(state)] \(text)"
+            }
+            .joined(separator: "\n")
 
         return """
         You are a precise data-transformation tool for the ApplyKit résumé builder. Convert the pasted tailoring suggestion into a single JSON object describing the exact edits to apply to this application's résumé. Reference bullets ONLY by the ids in the candidate pool below.
@@ -334,6 +343,9 @@ enum PromptBuilder {
         - Selected experience ids: \(currentSelectedWork.isEmpty ? "none" : currentSelectedWork)
         - Selected project ids: \(currentSelectedProjects.isEmpty ? "none" : currentSelectedProjects)
         - Section-order vocabulary (use these exact strings): \(sectionVocab)
+
+        ## Role-description lines (per-employment summary line, distinct from bullets)
+        \(roleDescriptions.isEmpty ? "None." : roleDescriptions)
 
         ## Pasted tailoring suggestion
         \(pastedReply)
@@ -350,6 +362,9 @@ enum PromptBuilder {
           "ordered_project_ids": ["<project ids to include, in final order>"],
           "replacements": [
             { "experience_id": "<id from the pool>", "text": "<tailored replacement bullet text>", "name": "<short variant label>", "reason": "<why, one line>" }
+          ],
+          "role_descriptions": [
+            { "employment_id": "<employment id>", "include": <true to show the role line / false to hide it>, "text": "<optional tailored role-description wording>" }
           ]
         }
 
@@ -358,6 +373,7 @@ enum PromptBuilder {
         - `ordered_experience_ids` / `ordered_project_ids` are the FINAL selected sets in the suggestion's stated order; bullets the suggestion drops are simply absent.
         - Put a bullet in `replacements` only when the suggestion gives new wording for it. A replaced bullet should also appear in the appropriate ordered_* list so it stays selected.
         - `skills_latex` must be raw LaTeX if provided (do not escape it). `summary` is plain prose.
+        - Use `role_descriptions` when the suggestion says to include/show or drop/hide an employment's role-description line, or rewords it. Set `include` only when visibility changes (omit otherwise); set `text` only when the wording changes (omit otherwise). Reference employments only by the ids listed above.
         - Do NOT invent experience, metrics, or ids.
 
         Return ONLY the JSON object — no prose, no markdown fences.
