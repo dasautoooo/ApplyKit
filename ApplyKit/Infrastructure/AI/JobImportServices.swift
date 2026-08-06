@@ -448,16 +448,40 @@ private final class RenderedJobPageLoader: NSObject, WKNavigationDelegate {
         }
     }
 
+    /// How many times to re-read the DOM before giving up on more content arriving,
+    /// and how long to wait between reads. `didFinish` fires when the document has
+    /// loaded, which on a client-rendered board (jobs.uber.com, most SPAs) is before
+    /// the posting itself exists — reading once there yields an empty page.
+    private static let settleAttempts = 10
+    private static let settleInterval = Duration.milliseconds(600)
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        extractContent(from: webView, attempt: 0)
+    }
+
+    private func extractContent(from webView: WKWebView, attempt: Int) {
+        // `innerText` needs layout, and this web view is never in a window — on many
+        // client-rendered boards it returns "" no matter how long we wait, which made the
+        // whole rendered fallback look like a page with no description. `textContent`
+        // needs no layout, so it stands in whenever innerText comes back thin.
         let script = """
-        (() => JSON.stringify({
-          title: document.title || "",
-          description: document.querySelector('meta[name="description"]')?.content
-            || document.querySelector('meta[property="og:description"]')?.content || "",
-          jsonLD: Array.from(document.querySelectorAll('script[type="application/ld+json"]'))
-            .map(node => node.textContent || ""),
-          text: document.body?.innerText || ""
-        }))()
+        (() => {
+          const inner = document.body ? (document.body.innerText || "") : "";
+          let flattened = "";
+          if (document.body) {
+            const clone = document.body.cloneNode(true);
+            clone.querySelectorAll("script,style,noscript,template").forEach(n => n.remove());
+            flattened = clone.textContent || "";
+          }
+          return JSON.stringify({
+            title: document.title || "",
+            description: document.querySelector('meta[name="description"]')?.content
+              || document.querySelector('meta[property="og:description"]')?.content || "",
+            jsonLD: Array.from(document.querySelectorAll('script[type="application/ld+json"]'))
+              .map(node => node.textContent || ""),
+            text: inner.length >= 200 ? inner : flattened
+          });
+        })()
         """
         webView.evaluateJavaScript(script) { [weak self, weak webView] result, error in
             guard let self else { return }
@@ -468,7 +492,7 @@ private final class RenderedJobPageLoader: NSObject, WKNavigationDelegate {
             guard let json = result as? String,
                   let data = json.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let resolvedURL = webView?.url else {
+                  let webView, let resolvedURL = webView.url else {
                 self.finish(with: .failure(JobImportError.noUsableJobContent))
                 return
             }
@@ -480,7 +504,17 @@ private final class RenderedJobPageLoader: NSObject, WKNavigationDelegate {
                 visibleText: String((object["text"] as? String ?? "").collapsingWhitespace(preservingNewlines: true).prefix(80_000)),
                 wasRendered: true
             )
-            self.finish(with: .success(content))
+            // A page that already has its content returns on the first read, exactly as
+            // before; only a still-empty one costs extra waiting.
+            guard !content.isLikelyUsable, attempt + 1 < Self.settleAttempts else {
+                self.finish(with: .success(content))
+                return
+            }
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: Self.settleInterval)
+                guard let self, self.continuation != nil else { return }
+                self.extractContent(from: webView, attempt: attempt + 1)
+            }
         }
     }
 

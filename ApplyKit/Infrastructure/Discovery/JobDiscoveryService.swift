@@ -22,6 +22,10 @@ final class JobDiscoveryService {
         /// deliberately absent: an outage or a partial crawl must never be read
         /// as "every job is gone".
         var liveKeysByBoard: [UUID: Set<String>] = [:]
+        /// Fresh listings for postings we already hold rows for, keyed by dedup key.
+        /// Dedup skips anything already seen, so without this a row discovered before a
+        /// provider learned to report (say) locations would keep that gap forever.
+        var enrichmentsByKey: [String: DiscoveredPosting] = [:]
     }
 
     /// Poll every board sequentially. `existingApplicationKeys` are the normalized
@@ -37,6 +41,8 @@ final class JobDiscoveryService {
         var newJobs: [DiscoveredJob] = []
         var errors: [String] = []
         var liveKeysByBoard: [UUID: Set<String>] = [:]
+        var enrichmentsByKey: [String: DiscoveredPosting] = [:]
+        let existingKeys = Set(existingDiscovered.map(\.dedupeKey))
 
         for (index, board) in boards.enumerated() {
             do {
@@ -48,6 +54,11 @@ final class JobDiscoveryService {
                     liveKeysByBoard[board.id] = Set(
                         postings.compactMap { JobURLNormalizer.duplicateKey(for: $0.url) })
                 }
+                for posting in postings {
+                    guard let key = JobURLNormalizer.duplicateKey(for: posting.url),
+                          existingKeys.contains(key) else { continue }
+                    enrichmentsByKey[key] = posting
+                }
                 newJobs.append(contentsOf: Self.filterAndDedupe(postings: postings, board: board, seenKeys: &seenKeys))
                 updatedBoards[index].lastPolledAt = Date()
             } catch {
@@ -56,7 +67,47 @@ final class JobDiscoveryService {
         }
 
         return RefreshOutcome(boards: updatedBoards, newJobs: newJobs,
-                              errors: errors, liveKeysByBoard: liveKeysByBoard)
+                              errors: errors, liveKeysByBoard: liveKeysByBoard,
+                              enrichmentsByKey: enrichmentsByKey)
+    }
+
+    /// Backfills fields that were missing on rows discovered earlier, from the current
+    /// listing. Returns the number of rows changed.
+    ///
+    /// Gaps are only ever filled, never overwritten — except the title, which is wholly
+    /// provider-owned and may have been stored wrong (Apple briefly supplied its URL slug
+    /// in place of the display title).
+    @discardableResult
+    static func applyEnrichments(_ enrichments: [String: DiscoveredPosting],
+                                 to jobs: inout [DiscoveredJob]) -> Int {
+        guard !enrichments.isEmpty else { return 0 }
+        var changed = 0
+        for index in jobs.indices {
+            guard let posting = enrichments[jobs[index].dedupeKey] else { continue }
+            var didChange = false
+
+            if jobs[index].location.trimmed.isEmpty, !posting.location.trimmed.isEmpty {
+                jobs[index].location = posting.location
+                didChange = true
+            }
+            if jobs[index].postedAt == nil, let posted = posting.postedAt {
+                jobs[index].postedAt = posted
+                didChange = true
+            }
+            if jobs[index].jobDescription.trimmed.isEmpty, !posting.descriptionText.trimmed.isEmpty {
+                jobs[index].jobDescription = posting.descriptionText
+                jobs[index].jobDescriptionFetchedAt = Date()
+                didChange = true
+            }
+            let title = posting.title.trimmed
+            if !title.isEmpty, title != jobs[index].title {
+                jobs[index].title = title
+                didChange = true
+            }
+
+            if didChange { changed += 1 }
+        }
+        return changed
     }
 
     /// Postings still marked `new` on a successfully-polled board that no longer

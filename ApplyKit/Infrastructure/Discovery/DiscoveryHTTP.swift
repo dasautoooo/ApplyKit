@@ -147,6 +147,46 @@ enum DiscoveryHTTP {
         return Date(timeIntervalSince1970: number > 10_000_000_000 ? number / 1000 : number)
     }
 
+    private static func fixedFormatter(_ format: String) -> DateFormatter {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = format
+        return f
+    }
+
+    private static let longDateFormatters = [
+        fixedFormatter("MMMM d, yyyy"),   // Amazon: "August 6, 2026"
+        fixedFormatter("MMM d, yyyy"),    // Apple's mediumDate: "Aug 6, 2026"
+        fixedFormatter("yyyy-MM-dd")
+    ]
+
+    /// Parses the human-readable posting dates some boards return instead of a timestamp.
+    /// Amazon pads single-digit days ("August  6, 2026"), so runs of whitespace collapse first.
+    static func longDate(_ value: Any?) -> Date? {
+        guard let raw = (value as? String)?.trimmed, !raw.isEmpty else { return nil }
+        let text = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        for formatter in longDateFormatters {
+            if let date = formatter.date(from: text) { return date }
+        }
+        return nil
+    }
+
+    private static let rfc822Formatters = [
+        fixedFormatter("EEE, dd MMM yyyy HH:mm:ss Z"),
+        fixedFormatter("EEE, dd MMM yyyy HH:mm:ss zzz"),
+        fixedFormatter("dd MMM yyyy HH:mm:ss Z")
+    ]
+
+    /// RSS `<pubDate>` (RFC 822).
+    static func rfc822Date(_ value: Any?) -> Date? {
+        guard let text = (value as? String)?.trimmed, !text.isEmpty else { return nil }
+        for formatter in rfc822Formatters {
+            if let date = formatter.date(from: text) { return date }
+        }
+        return nil
+    }
+
     /// Strips HTML tags/entities from a description snippet.
     static func plainText(_ html: String?) -> String {
         guard let html, !html.isEmpty else { return "" }

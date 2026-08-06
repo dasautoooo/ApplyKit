@@ -15,8 +15,13 @@ import SwiftUI
 /// on-launch refresh in ContentView.
 @MainActor
 enum DiscoveryCoordinator {
+    /// `only` restricts the poll to specific boards — editing one board's filters has no
+    /// bearing on the other seven, and sweeping them all turns a filter tweak into a
+    /// minutes-long crawl. Dedup and close-detection still see the full store, so a
+    /// narrowed poll can't resurrect a duplicate or mistake an unpolled board for empty.
     static func refresh(store: AppDataStore, settings: AppSettings,
-                        monitor: AppActivityMonitor, service: JobDiscoveryService) async {
+                        monitor: AppActivityMonitor, service: JobDiscoveryService,
+                        only: [TrackedBoard]? = nil) async {
         // Prune catch-all talent-pool postings that slipped into the inbox before
         // the current filter rules existed.
         let prunedCount = store.discoveredJobs.count
@@ -25,9 +30,10 @@ enum DiscoveryCoordinator {
             try? WorkspaceSyncService.persistDiscoveredJobs(store.discoveredJobs, settings: settings)
         }
 
-        let boards = store.trackedBoards
+        let boards = only ?? store.trackedBoards
         guard !boards.isEmpty else { return }
-        monitor.start("Checking \(boards.count) board\(boards.count == 1 ? "" : "s") for new jobs…")
+        let subject = boards.count == 1 ? boards[0].displayName : "\(boards.count) boards"
+        monitor.start("Checking \(subject) for new jobs…")
         let appKeys = Set(store.applications.compactMap { JobURLNormalizer.duplicateKey(for: $0.jobURL) })
         let outcome = await service.refresh(boards: boards,
                                             existingApplicationKeys: appKeys,
@@ -38,6 +44,11 @@ enum DiscoveryCoordinator {
         if !outcome.newJobs.isEmpty {
             store.discoveredJobs.insert(contentsOf: outcome.newJobs, at: 0)
         }
+
+        // Rows found before a provider could report locations or posting dates would
+        // otherwise keep those gaps forever, since dedup skips anything already seen.
+        let enrichedCount = JobDiscoveryService.applyEnrichments(outcome.enrichmentsByKey,
+                                                                to: &store.discoveredJobs)
 
         // Postings that vanished from a board that polled cleanly are marked
         // closed rather than deleted, so a role disappearing is visible instead
@@ -51,7 +62,7 @@ enum DiscoveryCoordinator {
         }
 
         try? WorkspaceSyncService.persistTrackedBoards(store.trackedBoards, settings: settings)
-        if !outcome.newJobs.isEmpty || !closedIDs.isEmpty {
+        if !outcome.newJobs.isEmpty || !closedIDs.isEmpty || enrichedCount > 0 {
             try? WorkspaceSyncService.persistDiscoveredJobs(store.discoveredJobs, settings: settings)
         }
 
@@ -131,7 +142,8 @@ struct DiscoveryWorkspaceView: View {
                 .help("Track a job board by URL, or pick a company")
             }
             ToolbarItem {
-                Button(action: refresh) {
+                // The toolbar button is the deliberate "check everything" action.
+                Button { refresh() } label: {
                     if isRefreshing {
                         ProgressView().controlSize(.small)
                     } else {
@@ -455,12 +467,13 @@ struct DiscoveryWorkspaceView: View {
 
     // MARK: - Actions
 
-    private func refresh() {
+    private func refresh(only boards: [TrackedBoard]? = nil) {
         guard !isRefreshing else { return }
         isRefreshing = true
         Task {
             await DiscoveryCoordinator.refresh(store: store, settings: settings,
-                                               monitor: activityMonitor, service: service)
+                                               monitor: activityMonitor, service: service,
+                                               only: boards)
             isRefreshing = false
         }
     }
@@ -468,7 +481,7 @@ struct DiscoveryWorkspaceView: View {
     private func addBoard(_ board: TrackedBoard) {
         store.trackedBoards.append(board)
         persistBoards()
-        refresh()
+        refresh(only: [board])
     }
 
     private func updateBoard(_ board: TrackedBoard) {
@@ -478,7 +491,7 @@ struct DiscoveryWorkspaceView: View {
         // Immediately drop already-surfaced postings that the tightened filters now
         // reject, then refresh to pull in any the loosened filters newly allow.
         reapplyFilters(for: board)
-        refresh()
+        refresh(only: [board])
     }
 
     /// Re-evaluate a board's `new` postings against its current filters, removing

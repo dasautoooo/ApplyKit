@@ -301,6 +301,125 @@ final class JobDiscoveryTests: XCTestCase {
         XCTAssertEqual(applePostings.first?.url, "https://jobs.apple.com/en-us/details/200313970")
     }
 
+    /// Amazon reports a written-out date, and pads single-digit days with a second space.
+    func testAmazonParsesWrittenOutPostedDate() throws {
+        let json: [String: Any] = ["jobs": [
+            ["id": "1", "title": "SDE", "job_path": "/en/jobs/1/sde",
+             "posted_date": "August  6, 2026"]
+        ]]
+        let posted = try XCTUnwrap(AmazonProvider.parse(json).first?.postedAt)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        XCTAssertEqual(calendar.dateComponents([.year, .month, .day], from: posted),
+                       DateComponents(year: 2026, month: 8, day: 6))
+    }
+
+    /// `transformedPostingTitle` is Apple's URL slug, not a display title — using it as the
+    /// title is what made Apple rows read "in-business-expert".
+    func testAppleUsesPostingTitleAndSlugsTheURL() throws {
+        let json: [String: Any] = ["res": ["searchResults": [
+            ["positionId": "200313970",
+             "postingTitle": "IN-Business Expert",
+             "transformedPostingTitle": "in-business-expert",
+             "locations": [["name": "India"]],
+             "postingDate": "Aug 06, 2026",
+             "postDateInGMT": "2026-08-06T04:01:18.327219746Z"]
+        ]]]
+        let posting = try XCTUnwrap(AppleProvider.parse(json).first)
+        XCTAssertEqual(posting.title, "IN-Business Expert")
+        XCTAssertEqual(posting.url, "https://jobs.apple.com/en-us/details/200313970/in-business-expert")
+        // postDateInGMT carries nanosecond precision; postingDate is unparseable as ISO.
+        XCTAssertEqual(posting.postedAt?.timeIntervalSince1970 ?? 0,
+                       Date(timeIntervalSince1970: 1_785_988_878.327).timeIntervalSince1970,
+                       accuracy: 1)
+    }
+
+    /// Uber's board is Oracle Recruiting Cloud. The legacy www.uber.com search endpoint
+    /// still answers but lists requisitions with no public page, so it isn't the source.
+    func testUberMapsOracleRequisitionsWithAllOffices() throws {
+        let json: [String: Any] = ["items": [[
+            "TotalJobsCount": 663,
+            "requisitionList": [
+                ["Id": "159889", "Title": "Operations Manager, Marketplace",
+                 "PostedDate": "2026-08-06",
+                 "PrimaryLocation": "Chicago, IL, United States",
+                 "secondaryLocations": [["Name": "Miami, FL, United States"],
+                                        ["Name": "New York City, NY, United States"]]],
+                ["Id": "160418", "Title": "Engineer", "PostedDate": "2026-08-01",
+                 "PrimaryLocation": "Toronto, ON, Canada", "secondaryLocations": []]
+            ]
+        ]]]
+        let postings = UberProvider.parse(json)
+        XCTAssertEqual(postings.count, 2)
+
+        let first = try XCTUnwrap(postings.first)
+        XCTAssertEqual(first.externalID, "159889")
+        XCTAssertEqual(first.location,
+                       "Chicago, IL, United States | Miami, FL, United States | New York City, NY, United States")
+        XCTAssertNotNil(first.postedAt)
+        XCTAssertTrue(first.url.hasSuffix("/sites/UberCareers/job/159889"), first.url)
+
+        XCTAssertEqual(postings.last?.location, "Toronto, ON, Canada")
+    }
+
+    func testUberBoardDetectionCoversBothItsHosts() throws {
+        for candidate in ["https://jobs.uber.com/en/jobs/159889/",
+                          "https://www.uber.com/us/en/careers/list/",
+                          "https://iaziqy.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/UberCareers/job/159889"] {
+            let url = try XCTUnwrap(URL(string: candidate))
+            XCTAssertEqual(UberProvider.board(for: url)?.kindRaw, "uber", candidate)
+        }
+    }
+
+    /// Dedup skips postings already in the inbox, so a provider that starts reporting a
+    /// field would never reach rows discovered before the fix without this backfill.
+    func testEnrichmentFillsGapsOnExistingRowsWithoutOverwriting() throws {
+        var jobs = [
+            DiscoveredJob(boardID: UUID(), externalID: "1", dedupeKey: "https://example.com/1",
+                          title: "in-business-expert", companyName: "Apple",
+                          location: "", url: "https://example.com/1", postedAt: nil),
+            DiscoveredJob(boardID: UUID(), externalID: "2", dedupeKey: "https://example.com/2",
+                          title: "Engineer", companyName: "Apple",
+                          location: "Toronto", url: "https://example.com/2",
+                          postedAt: Date(timeIntervalSince1970: 1_000),
+                          jobDescription: "Already cached.")
+        ]
+        let enrichments = [
+            "https://example.com/1": DiscoveredPosting(
+                externalID: "1", title: "IN-Business Expert", location: "India",
+                url: "https://example.com/1", postedAt: Date(timeIntervalSince1970: 5_000),
+                descriptionText: "Fresh body."),
+            "https://example.com/2": DiscoveredPosting(
+                externalID: "2", title: "Engineer", location: "Vancouver",
+                url: "https://example.com/2", postedAt: Date(timeIntervalSince1970: 9_000),
+                descriptionText: "Different body.")
+        ]
+
+        let changed = JobDiscoveryService.applyEnrichments(enrichments, to: &jobs)
+        XCTAssertEqual(changed, 1)
+
+        // Gaps filled, and a wrong provider-owned title corrected.
+        XCTAssertEqual(jobs[0].title, "IN-Business Expert")
+        XCTAssertEqual(jobs[0].location, "India")
+        XCTAssertEqual(jobs[0].postedAt, Date(timeIntervalSince1970: 5_000))
+        XCTAssertEqual(jobs[0].jobDescription, "Fresh body.")
+        XCTAssertNotNil(jobs[0].jobDescriptionFetchedAt)
+
+        // Values already present are left alone.
+        XCTAssertEqual(jobs[1].location, "Toronto")
+        XCTAssertEqual(jobs[1].postedAt, Date(timeIntervalSince1970: 1_000))
+        XCTAssertEqual(jobs[1].jobDescription, "Already cached.")
+    }
+
+    func testSharedDateHelpers() {
+        XCTAssertNotNil(DiscoveryHTTP.longDate("August  6, 2026"))
+        XCTAssertNotNil(DiscoveryHTTP.longDate("Aug 6, 2026"))
+        XCTAssertNil(DiscoveryHTTP.longDate("not a date"))
+        XCTAssertNil(DiscoveryHTTP.longDate(nil))
+        XCTAssertNotNil(DiscoveryHTTP.rfc822Date("Wed, 05 Aug 2026 14:30:00 +0000"))
+        XCTAssertNil(DiscoveryHTTP.rfc822Date("2026-08-05"))
+    }
+
     func testTikTokFamilyMappingCarriesDescription() {
         let json: [String: Any] = ["data": ["job_post_list": [
             ["id": "766790", "title": "Backend Engineer",
@@ -314,20 +433,79 @@ final class JobDiscoveryTests: XCTestCase {
         XCTAssertTrue(postings.first?.descriptionText.contains("5 years experience.") ?? false)
     }
 
-    func testGoogleHTMLParsingUsesAriaLabelContract() {
+    /// Google's results page embeds the full dataset as an `AF_initDataCallback` payload.
+    /// The old aria-label scrape yielded a title and nothing else, which left `location`
+    /// empty — and an empty location makes `passesFilters` skip the location check entirely.
+    func testGoogleParsesEmbeddedPayloadForLocationDateAndDescription() {
+        let postings = GoogleProvider.parse(html: googleFixtureHTML)
+        XCTAssertEqual(postings.count, 2)
+
+        let first = postings.first { $0.externalID == "104461467704533702" }
+        XCTAssertEqual(first?.title, "Software Engineer, Infrastructure")
+        XCTAssertEqual(first?.location, "Toronto, ON, Canada | Waterloo, ON, Canada")
+        XCTAssertEqual(first?.url, "https://www.google.com/about/careers/applications/jobs/results/104461467704533702")
+        XCTAssertEqual(first?.postedAt, Date(timeIntervalSince1970: 1_785_150_557))
+        XCTAssertTrue(first?.descriptionText.contains("About the job") ?? false)
+        XCTAssertTrue(first?.descriptionText.contains("Build infrastructure") ?? false)
+    }
+
+    /// The live page ships a second callback block listing Google's sub-brands, with the same
+    /// outer shape as the jobs block. Picking a block by position or key would grab it.
+    func testGoogleIgnoresTheSubBrandBlockAndFindsTheJobsBlock() {
         let html = """
-        <div>
-          <a href="/about/careers/applications/jobs/results/12345-software-engineer"
-             aria-label="Learn more about Software Engineer, Infrastructure">x</a>
-          <a href="/about/careers/applications/jobs/results/67890-data-scientist"
-             aria-label="Learn more about Data Scientist">y</a>
-          <a href="/about/careers/other" aria-label="Unrelated link">z</a>
-        </div>
+        <script>AF_initDataCallback({key: 'ds:0', data:[[
+        ["projects/x/companies/a","DeepMind","logo"],["projects/x/companies/b","GFiber","logo"]
+        ]], sideChannel: {}});</script>
+        \(googleFixtureHTML)
         """
         let postings = GoogleProvider.parse(html: html)
         XCTAssertEqual(postings.count, 2)
-        XCTAssertEqual(postings.first?.title, "Software Engineer, Infrastructure")
-        XCTAssertTrue(postings.first?.url.hasPrefix("https://www.google.com/") ?? false)
+        XCTAssertFalse(postings.contains { $0.title == "DeepMind" })
+    }
+
+    /// The payload is positional, so a record that loses its trailing fields must degrade to
+    /// nil rather than trap on an out-of-range index.
+    func testGoogleShortRecordDegradesInsteadOfCrashing() {
+        let html = googleFixtureHTML.replacingOccurrences(
+            of: "]], sideChannel: {}});",
+            with: #",["555","Truncated Role"]]], sideChannel: {}});"#)
+        let postings = GoogleProvider.parse(html: html)
+        XCTAssertEqual(postings.count, 3)
+        let truncated = postings.first { $0.externalID == "555" }
+        XCTAssertEqual(truncated?.title, "Truncated Role")
+        XCTAssertEqual(truncated?.location, "")
+        XCTAssertNil(truncated?.postedAt)
+    }
+
+    /// Untitled records were previously ingested as jobs — the aria-label regex matched page
+    /// furniture such as "Learn more about remote eligibility".
+    func testGoogleSkipsRecordsWithoutATitle() {
+        let html = googleFixtureHTML.replacingOccurrences(
+            of: "]], sideChannel: {}});",
+            with: #",["999",""]]], sideChannel: {}});"#)
+        XCTAssertEqual(GoogleProvider.parse(html: html).count, 2)
+        XCTAssertFalse(GoogleProvider.parse(html: html).contains { $0.externalID == "999" })
+    }
+
+    /// Trimmed to the fields the parser reads, at the indices they occupy on the live page.
+    private var googleFixtureHTML: String {
+        """
+        <script>AF_initDataCallback({key: 'ds:1', hash: '3', data:[[
+        ["104461467704533702","Software Engineer, Infrastructure","https://apply",
+         [null,"<p>Build infrastructure at scale.</p>"],[null,"<p>BS degree.</p>"],
+         "projects/x",null,"Google","en-US",
+         [["Toronto, ON, Canada",["Toronto, ON, Canada"],"Toronto",null,"ON","CA"],
+          ["Waterloo, ON, Canada",["Waterloo, ON, Canada"],"Waterloo",null,"ON","CA"]],
+         [null,"<p>About the job</p>"],[2],[1785150557,869000000],[1785150557,869000000],
+         [1785150558,362000000],null,null,null,null,null,3],
+        ["128658362114941638","Data Scientist","https://apply2",
+         [null,"<p>Analyze.</p>"],[null,"<p>MS degree.</p>"],
+         "projects/y",null,"Google","en-US",
+         [["Mountain View, CA, USA",["Mountain View, CA, USA"],"Mountain View",null,"CA","US"]],
+         [null,"<p>About</p>"],[2],[1785000000,0],[1785000000,0],[1785000000,0],
+         null,null,null,null,null,3]
+        ]], sideChannel: {}});</script>
+        """
     }
 
     func testTeamtailorRSSParsing() {
@@ -335,6 +513,7 @@ final class JobDiscoveryTests: XCTestCase {
         <rss><channel>
           <item><title><![CDATA[Senior Engineer]]></title>
                 <link>https://acme.teamtailor.com/jobs/123-senior-engineer</link>
+                <pubDate>Wed, 05 Aug 2026 14:30:00 +0000</pubDate>
                 <location>Toronto</location></item>
           <item><title>Designer</title>
                 <link>https://acme.teamtailor.com/jobs/456-designer</link></item>
@@ -344,6 +523,34 @@ final class JobDiscoveryTests: XCTestCase {
         XCTAssertEqual(postings.count, 2)
         XCTAssertEqual(postings.first?.title, "Senior Engineer")
         XCTAssertEqual(postings.first?.location, "Toronto")
+        XCTAssertNotNil(postings.first?.postedAt)   // RFC 822 <pubDate>
+        XCTAssertNil(postings.last?.postedAt)       // absent element stays nil
+    }
+
+    /// Meta's anchor text is "Title\nOffice\nOffice"; only the first line was being read,
+    /// so every Meta posting arrived with an empty location.
+    func testMetaParsesLocationsFromAnchorText() throws {
+        let json = """
+        [{"href":"https://www.metacareers.com/jobs/123456/","text":"Software Engineer\\nMenlo Park, CA\\nSeattle, WA"},
+         {"href":"https://www.metacareers.com/jobs/789/","text":"Data Engineer"}]
+        """
+        let postings = MetaProvider.parse(json: json)
+        XCTAssertEqual(postings.count, 2)
+        XCTAssertEqual(postings.first?.title, "Software Engineer")
+        XCTAssertEqual(postings.first?.location, "Menlo Park, CA | Seattle, WA")
+        XCTAssertEqual(postings.last?.location, "")
+    }
+
+    func testTikTokQualifiesCityWithParentRegion() throws {
+        let json: [String: Any] = ["data": ["job_post_list": [
+            ["id": "1", "title": "Engineer",
+             "city_info": ["en_name": "London", "parent": ["en_name": "United Kingdom"]]],
+            // Singapore is its own parent; don't render "Singapore, Singapore".
+            ["id": "2", "title": "Engineer 2",
+             "city_info": ["en_name": "Singapore", "parent": ["en_name": "Singapore"]]]
+        ]]]
+        let postings = ATSxCareers.parse(json, jobURLPrefix: "https://lifeattiktok.com/search/")
+        XCTAssertEqual(postings.map(\.location), ["London, United Kingdom", "Singapore"])
     }
 
     func testDescriptionFromProviderSeedsDiscoveredJob() {

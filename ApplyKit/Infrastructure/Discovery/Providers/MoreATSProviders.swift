@@ -280,6 +280,8 @@ enum JazzHRProvider: JobBoardProvider {
             let title = DiscoveryHTTP.plainText(String(html[titleRange])).trimmed
             guard !title.isEmpty else { return nil }
             seen.insert(id)
+            // The listing anchors carry a title and nothing else — no location and no
+            // posting date appear in this markup, so both stay empty.
             return DiscoveredPosting(externalID: id, title: title, location: "",
                                      url: "https://\(slug).applytojob.com/apply/\(id)", postedAt: nil)
         }
@@ -313,8 +315,13 @@ enum TeamtailorProvider: JobBoardProvider {
             let link = capture(#"(?is)<link>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</link>"#, in: item).first?.trimmed ?? ""
             guard !title.isEmpty, !link.isEmpty else { return nil }
             let location = capture(#"(?is)<location>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</location>"#, in: item).first?.trimmed ?? ""
+            let published = capture(#"(?is)<pubDate>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</pubDate>"#, in: item).first?.trimmed
             return DiscoveredPosting(externalID: link, title: title, location: location,
-                                     url: link, postedAt: nil)
+                                     url: link,
+                                     // RSS dates are RFC 822; fall back to ISO in case a
+                                     // feed deviates.
+                                     postedAt: DiscoveryHTTP.rfc822Date(published)
+                                        ?? DiscoveryHTTP.isoDate(published))
         }
     }
 

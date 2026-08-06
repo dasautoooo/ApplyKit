@@ -138,7 +138,12 @@ enum TeslaProvider: JobBoardProvider {
                 title: (item["t"] as? String ?? item["title"] as? String ?? "").trimmed,
                 location: locationName.trimmed,
                 url: "https://www.tesla.com/careers/search/job/\(identifier)",
-                postedAt: nil)
+                // Tesla abbreviates its listing keys; try both the short and long spellings
+                // of a posted date, in either epoch or ISO form. Akamai blocks every
+                // non-browser client, so this payload can only be inspected through the
+                // WebKit fetch above — leaves nil if the field turns out not to exist.
+                postedAt: DiscoveryHTTP.epochDate(item["pd"] ?? item["postedDate"] ?? item["created"])
+                    ?? DiscoveryHTTP.isoDate(item["pd"] ?? item["postedDate"] ?? item["created"]))
         }
     }
 }
@@ -186,10 +191,14 @@ enum MetaProvider: JobBoardProvider {
                   let text = (entry["text"] as? String)?.trimmed, !text.isEmpty,
                   !seen.contains(href) else { return nil }
             seen.insert(href)
-            // The title is the anchor's first line; later lines are metadata.
-            let title = text.split(separator: "\n").first.map(String.init)?.trimmed ?? text
+            // The title is the anchor's first line; the lines after it are the offices
+            // the role is open in (a role often lists several), which the location
+            // filter needs. Meta exposes no posting date anywhere in the DOM.
+            let lines = text.split(separator: "\n").map { String($0).trimmed }.filter { !$0.isEmpty }
+            let title = lines.first ?? text
+            let location = lines.dropFirst().joined(separator: " | ")
             let identifier = href.split(separator: "/").last(where: { Int($0) != nil }).map(String.init) ?? href
-            return DiscoveredPosting(externalID: identifier, title: title, location: "",
+            return DiscoveredPosting(externalID: identifier, title: title, location: location,
                                      url: href, postedAt: nil)
         }
     }
