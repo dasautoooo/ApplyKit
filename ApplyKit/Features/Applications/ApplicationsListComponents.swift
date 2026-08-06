@@ -36,6 +36,15 @@ struct ApplicationRow: View {
                 Text(application.priorityRaw)
                     .font(.caption)
                     .foregroundStyle(priorityColor)
+                // Last real activity, not `updatedAt` — that gets re-stamped by every autosave,
+                // so a stray keystroke would make a stalled application look fresh.
+                if let changed = application.lastTimelineChange {
+                    Text(changed.formatted(.relative(presentation: .named)))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .help("Last timeline entry: \(changed.formatted(date: .abbreviated, time: .shortened))")
+                }
                 Spacer()
                 if hasResume {
                     Image(systemName: "doc.text")

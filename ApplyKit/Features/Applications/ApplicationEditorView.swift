@@ -31,6 +31,9 @@ struct ApplicationEditorView: View {
     @State var masterResumePendingApply: MasterResume?
     @State var showSaveAsMasterResume = false
     @State var saveAsMasterResumeName = ""
+    /// Timeline entries this editor has already accounted for. Lets `adoptExternalTimelineEvents`
+    /// tell "recorded elsewhere while I wasn't looking" from "the user just deleted this".
+    @State var knownTimelineEventIDs: Set<UUID> = []
     @State private var scrollModel = EditorScrollModel()
     @State private var saveDebouncer = Debouncer()
     @AppStorage("applicationEditor.inspectorVisible") private var isInspectorVisible = true
@@ -47,6 +50,13 @@ struct ApplicationEditorView: View {
     /// updates flow into the view even if @State was initialized before the store loaded.
     var storeCuratedSuggestionsData: String {
         store.applications.first(where: { $0.id == application.id })?.curatedSuggestionsData ?? ""
+    }
+
+    /// Timeline as the store currently holds it. Archive and restore are recorded by the
+    /// applications list, not here, so this editor's snapshot can fall behind — and its
+    /// autosave would then write those entries back out of existence.
+    var storeTimeline: [ApplicationEvent] {
+        store.applications.first(where: { $0.id == application.id })?.timeline ?? []
     }
 
     var body: some View {
@@ -66,6 +76,12 @@ struct ApplicationEditorView: View {
         .onChange(of: storeCuratedSuggestionsData, initial: true) { _, newValue in
             guard curatedSuggestions.isEmpty, !newValue.isEmpty else { return }
             curatedSuggestions = decodeCuratedSuggestions(newValue)
+        }
+        .onAppear {
+            knownTimelineEventIDs = Set(application.timeline.map(\.id))
+        }
+        .onChange(of: storeTimeline.map(\.id)) { _, _ in
+            adoptExternalTimelineEvents(into: &application)
         }
         .onChange(of: applicationPersistenceFingerprint) { _, _ in
             saveDebouncer.schedule { persistApplicationChanges() }
@@ -101,6 +117,8 @@ struct ApplicationEditorView: View {
                         DetailPanel("Role Details", collapseKey: "applicationEditor.collapsed.roleDetails") {
                             roleForm
                         }
+                        timelineSection
+                            .editorSection(.timeline, space: scrollSpace)
                         masterResumePanel
                             .editorSection(.masterResume, space: scrollSpace)
                         documentActions

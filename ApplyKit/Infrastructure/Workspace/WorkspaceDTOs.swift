@@ -20,10 +20,25 @@ struct WorkspaceSettingsDTO: Codable {
 }
 
 struct ApplicationPathsDTO: Codable {
-    var jobDescription: String; var notes: String; var jdAnalysis: String?
+    var jobDescription: String; var notes: String; var jdAnalysis: String?; var timeline: String?
     enum CodingKeys: String, CodingKey {
-        case jobDescription = "job_description"; case notes; case jdAnalysis = "jd_analysis"
+        case jobDescription = "job_description"; case notes; case jdAnalysis = "jd_analysis"; case timeline
     }
+}
+
+struct ApplicationEventDTO: Codable {
+    var id: String; var date: String?; var kind: String
+    var fromStatus: String?; var toStatus: String?
+    var title: String?; var note: String?; var inferred: Bool?
+    enum CodingKeys: String, CodingKey {
+        case id; case date; case kind; case fromStatus = "from_status"; case toStatus = "to_status"
+        case title; case note; case inferred
+    }
+}
+
+/// Contents of an application's `timeline.yml` sidecar.
+struct ApplicationTimelineDTO: Codable {
+    var events: [ApplicationEventDTO]
 }
 
 struct ApplicationDocumentLinkDTO: Codable {

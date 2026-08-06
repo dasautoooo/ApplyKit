@@ -290,7 +290,8 @@ extension ApplicationEditorView {
             application.skillsBlockText,
             application.summaryText,
             application.tailoringPlanData,
-            WorkspaceDateCodec.string(from: application.archivedAt) ?? ""
+            WorkspaceDateCodec.string(from: application.archivedAt) ?? "",
+            application.timelineFingerprint
         ].joined(separator: "\u{1F}")
     }
 
@@ -298,9 +299,23 @@ extension ApplicationEditorView {
         persistApplicationChanges(application)
     }
 
+    /// Pulls in timeline entries the store gained while this editor held an older snapshot —
+    /// archive and restore are recorded by the applications list, and archiving deselects the
+    /// application, so the resulting flush would otherwise write those entries back out of
+    /// existence. Entries this editor already knew about are left alone, so deleting one sticks.
+    func adoptExternalTimelineEvents(into target: inout JobApplication) {
+        guard let stored = store.applications.first(where: { $0.id == target.id }) else { return }
+        for event in stored.timeline where !knownTimelineEventIDs.contains(event.id) {
+            target.recordEvent(event)
+        }
+        knownTimelineEventIDs.formUnion(stored.timeline.map(\.id))
+        knownTimelineEventIDs.formUnion(target.timeline.map(\.id))
+    }
+
     func persistApplicationChanges(_ targetApplication: JobApplication) {
         var target = targetApplication
         target.updatedAt = Date()
+        adoptExternalTimelineEvents(into: &target)
         guard let settings else { return }
 
         // Update the in-memory store synchronously (cheap) so the sidebar and other views

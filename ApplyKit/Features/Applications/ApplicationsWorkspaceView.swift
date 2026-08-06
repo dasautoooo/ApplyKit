@@ -324,6 +324,7 @@ struct ApplicationsWorkspaceView: View {
         copy.dateSaved = Date()
         copy.createdAt = Date()
         copy.updatedAt = Date()
+        copy.resetTimeline()
         store.applications.insert(copy, at: 0)
         persist(copy)
         selectedApplicationID = copy.id
@@ -334,6 +335,7 @@ struct ApplicationsWorkspaceView: View {
         guard let idx = store.applications.firstIndex(where: { $0.id == application.id }) else { return }
         store.applications[idx].archivedAt = Date()
         store.applications[idx].updatedAt = Date()
+        store.applications[idx].recordEvent(ApplicationEvent(kind: .archived))
         persist(store.applications[idx])
         if scopeFilter == ApplicationListScope.active.rawValue {
             selectedApplicationID = nil
@@ -344,6 +346,7 @@ struct ApplicationsWorkspaceView: View {
         guard let idx = store.applications.firstIndex(where: { $0.id == application.id }) else { return }
         store.applications[idx].archivedAt = nil
         store.applications[idx].updatedAt = Date()
+        store.applications[idx].recordEvent(ApplicationEvent(kind: .restored))
         persist(store.applications[idx])
         if scopeFilter == ApplicationListScope.archived.rawValue {
             selectedApplicationID = nil

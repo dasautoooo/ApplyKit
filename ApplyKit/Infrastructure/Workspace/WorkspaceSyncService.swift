@@ -104,6 +104,12 @@ enum WorkspaceSyncService {
         if !application.curatedSuggestionsData.isEmpty {
             try application.curatedSuggestionsData.write(to: appFolder.appendingPathComponent(WorkspaceFiles.curatedSuggestionsFile), atomically: true, encoding: .utf8)
         }
+        let timelineURL = appFolder.appendingPathComponent(WorkspaceFiles.timelineFile)
+        if application.timeline.isEmpty {
+            try? FileManager.default.removeItem(at: timelineURL)
+        } else {
+            try YAMLFileStore.write(WorkspaceFiles.timelineDTO(from: application.timeline), to: timelineURL)
+        }
         let tailoringPlanURL = appFolder.appendingPathComponent(WorkspaceFiles.tailoringPlanFile)
         if application.tailoringPlanData.isEmpty {
             try? FileManager.default.removeItem(at: tailoringPlanURL)

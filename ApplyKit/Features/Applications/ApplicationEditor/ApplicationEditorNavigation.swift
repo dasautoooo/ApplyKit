@@ -18,6 +18,7 @@ import SwiftUI
 /// Sections of the application editor, in display order, used by the navigation side rail.
 enum EditorSection: Int, CaseIterable, Identifiable {
     case roleDetails
+    case timeline
     case masterResume
     case documents
     case sectionOrder
@@ -32,6 +33,7 @@ enum EditorSection: Int, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .roleDetails: "Role Details"
+        case .timeline: "Timeline"
         case .masterResume: "Master Resume"
         case .documents: "Documents"
         case .sectionOrder: "Section Order"
@@ -46,6 +48,7 @@ enum EditorSection: Int, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .roleDetails: "briefcase"
+        case .timeline: "clock.arrow.circlepath"
         case .masterResume: "doc.on.doc"
         case .documents: "doc.text"
         case .sectionOrder: "arrow.up.arrow.down"

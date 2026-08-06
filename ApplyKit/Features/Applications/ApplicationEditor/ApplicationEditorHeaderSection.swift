@@ -91,7 +91,13 @@ extension ApplicationEditorView {
         VStack(spacing: 12) {
             HStack(alignment: .top, spacing: 16) {
                 LabeledControl("Status") {
-                    Picker("Status", selection: $application.statusRaw) {
+                    // Routed through setStatus rather than bound straight to statusRaw so the
+                    // transition lands in the timeline. A binding setter fires only on a real
+                    // pick — never when the editor loads or writes an application back.
+                    Picker("Status", selection: Binding(
+                        get: { application.statusRaw },
+                        set: { application.setStatus(rawValue: $0) }
+                    )) {
                         ForEach(ApplicationStatus.allCases) { status in
                             Text(status.rawValue).tag(status.rawValue)
                         }

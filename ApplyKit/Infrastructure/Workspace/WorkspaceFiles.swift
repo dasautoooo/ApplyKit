@@ -13,6 +13,7 @@ enum WorkspaceFiles {
     static let jobDescriptionFile = "job-description.md"
     static let notesFile = "notes.md"
     static let jdAnalysisFile = "jd-analysis.md"
+    static let timelineFile = "timeline.yml"
     static let curatedSuggestionsFile = "curated-suggestions.json"
     static let tailoringPlanFile = "tailoring-suggestion.json"
     static let manifestYAML = "manifest.yml"
@@ -125,8 +126,40 @@ enum WorkspaceFiles {
             skillsBlock: application.skillsBlockText, summary: application.summaryText,
             archivedAt: WorkspaceDateCodec.string(from: application.archivedAt),
             createdAt: WorkspaceDateCodec.string(from: application.createdAt), updatedAt: WorkspaceDateCodec.string(from: application.updatedAt),
-            paths: ApplicationPathsDTO(jobDescription: jobDescriptionFile, notes: notesFile, jdAnalysis: jdAnalysisFile),
+            paths: ApplicationPathsDTO(jobDescription: jobDescriptionFile, notes: notesFile, jdAnalysis: jdAnalysisFile,
+                timeline: application.timeline.isEmpty ? nil : timelineFile),
             documents: links)
+    }
+
+    // MARK: - Application timeline
+
+    static func timelineDTO(from events: [ApplicationEvent]) -> ApplicationTimelineDTO {
+        ApplicationTimelineDTO(events: events.map { event in
+            ApplicationEventDTO(id: event.id.uuidString, date: WorkspaceDateCodec.string(from: event.date),
+                kind: event.kindRaw,
+                fromStatus: event.fromStatusRaw.isEmpty ? nil : event.fromStatusRaw,
+                toStatus: event.toStatusRaw.isEmpty ? nil : event.toStatusRaw,
+                title: event.title.isEmpty ? nil : event.title,
+                note: event.note.isEmpty ? nil : event.note,
+                inferred: event.isInferred ? true : nil)
+        })
+    }
+
+    static func makeTimeline(from dto: ApplicationTimelineDTO) -> [ApplicationEvent] {
+        let events = dto.events.map { item in
+            ApplicationEvent(
+                id: UUID(uuidString: item.id) ?? UUID(),
+                date: WorkspaceDateCodec.date(from: item.date) ?? Date(),
+                kind: ApplicationEventKind(rawValue: item.kind) ?? .note,
+                fromStatusRaw: item.fromStatus ?? "",
+                toStatusRaw: item.toStatus ?? "",
+                title: item.title ?? "",
+                note: item.note ?? "",
+                isInferred: item.inferred ?? false
+            )
+        }
+        // Hand-edited YAML need not be ordered; the app relies on newest-first.
+        return ApplicationTimeline.sortedNewestFirst(events)
     }
 
     static func makeApplication(from dto: ApplicationFileDTO, appFolder: URL) -> JobApplication {
@@ -159,6 +192,15 @@ enum WorkspaceFiles {
         }
         app.curatedSuggestionsData = (try? String(contentsOf: appFolder.appendingPathComponent(curatedSuggestionsFile), encoding: .utf8)) ?? ""
         app.tailoringPlanData = (try? String(contentsOf: appFolder.appendingPathComponent(tailoringPlanFile), encoding: .utf8)) ?? ""
+        // Assigned unconditionally so the entry `JobApplication.init` seeded is replaced, never
+        // appended to. Applications saved before timelines existed have no sidecar and get a
+        // history inferred from their stored dates instead.
+        let timelineURL = resolve(dto.paths.timeline ?? timelineFile, relativeTo: appFolder)
+        if let stored = try? YAMLFileStore.read(ApplicationTimelineDTO.self, from: timelineURL) {
+            app.timeline = makeTimeline(from: stored)
+        } else {
+            app.timeline = ApplicationTimeline.backfilled(for: app)
+        }
         return app
     }
 
