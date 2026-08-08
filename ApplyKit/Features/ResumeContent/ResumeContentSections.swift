@@ -250,6 +250,11 @@ struct ResumeWordingSection<Content: ResumeContentModel & Identifiable>: View wh
     let onPersistExperience: (ExperienceBullet) -> Void
     let onPersistApplication: (JobApplication) -> Void
     let onPersistContent: (Content) -> Void
+    /// Set when editing an application, so wording private to it stays visible
+    /// and other applications' stays hidden (see `ExperienceScope`).
+    var scopeApplicationID: UUID? = nil
+    /// Files an application-scoped bullet in the shared bank; nil hides the action.
+    var onPromoteToBank: ((ExperienceBullet) -> Void)? = nil
     var collapseKey: String? = nil
 
     var body: some View {
@@ -335,6 +340,10 @@ struct ResumeWordingSection<Content: ResumeContentModel & Identifiable>: View wh
                                 onPersistExperience: onPersistExperience,
                                 onPersistApplication: onPersistApplication,
                                 onPersistContent: onPersistContent,
+                                scopeApplicationID: scopeApplicationID,
+                                onPromoteToBank: onPromoteToBank.map { promote in
+                                    { promote(experience) }
+                                },
                                 canMoveUp: index > 0,
                                 canMoveDown: index < group.items.count - 1,
                                 onMoveUp: { moveExperience(experience.id, in: group, groups: groups, by: -1) },

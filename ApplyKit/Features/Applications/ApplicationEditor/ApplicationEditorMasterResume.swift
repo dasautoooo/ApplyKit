@@ -26,7 +26,6 @@ extension ApplicationEditorView {
                             Label("Apply Master Resume", systemImage: "square.and.arrow.down.on.square")
                         }
                         .fixedSize()
-                        .disabled(activityMonitor.state == .running)
                         .help("Replace this application's resume content with a master resume preset")
                     }
 

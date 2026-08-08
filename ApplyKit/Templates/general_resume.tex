@@ -34,10 +34,14 @@
 % Define custom command for underlined hyperlinks
 \newcommand{\ulhref}[2]{\href{#1}{\uline{#2}}}
 
-\hyphenpenalty=5000
-\exhyphenpenalty=5000
-\tolerance=1000
-\emergencystretch=1em
+% Never hyphenate. A break inside a word survives into the PDF's extracted text
+% ("connec-" + "tions"), which costs the keyword an ATS is matching on. 10000 is
+% TeX's infinity, so words stay whole; the wider tolerance and emergencystretch
+% give it room to justify by stretching spaces instead.
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
+\tolerance=9999
+\emergencystretch=3em
 
 %------------------------------------------------
 

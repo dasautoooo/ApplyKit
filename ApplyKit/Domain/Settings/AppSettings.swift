@@ -37,6 +37,40 @@ import Observation
     }
     private var _preferredAIBackendRaw: String
 
+    /// Lets the Resume Tailor read the live posting and the résumé guidance its
+    /// rules come from. Costs a slower, more expensive Stage 1 run.
+    var researchEnabled: Bool {
+        get { _researchEnabled }
+        set { _researchEnabled = newValue; ud.set(newValue, forKey: Keys.researchEnabled) }
+    }
+    private var _researchEnabled: Bool
+
+    /// Model and effort overrides per backend. Blank means "whatever the CLI is
+    /// configured to use" — the app doesn't second-guess your CLI config.
+    var claudeModel: String {
+        get { _claudeModel }
+        set { _claudeModel = newValue; ud.set(newValue, forKey: Keys.claudeModel) }
+    }
+    private var _claudeModel: String
+
+    var claudeEffort: String {
+        get { _claudeEffort }
+        set { _claudeEffort = newValue; ud.set(newValue, forKey: Keys.claudeEffort) }
+    }
+    private var _claudeEffort: String
+
+    var codexModel: String {
+        get { _codexModel }
+        set { _codexModel = newValue; ud.set(newValue, forKey: Keys.codexModel) }
+    }
+    private var _codexModel: String
+
+    var codexReasoningEffort: String {
+        get { _codexReasoningEffort }
+        set { _codexReasoningEffort = newValue; ud.set(newValue, forKey: Keys.codexReasoningEffort) }
+    }
+    private var _codexReasoningEffort: String
+
     var latexBuildCommand: String {
         get { _latexBuildCommand }
         set { _latexBuildCommand = newValue; ud.set(newValue, forKey: Keys.latexBuildCommand) }
@@ -81,6 +115,11 @@ import Observation
         _codexCLIPath              = ud.string(forKey: Keys.codexCLIPath) ?? ""
         _claudeCLIPath             = ud.string(forKey: Keys.claudeCLIPath) ?? ""
         _preferredAIBackendRaw     = ud.string(forKey: Keys.preferredAIBackendRaw) ?? "Claude"
+        _researchEnabled           = ud.object(forKey: Keys.researchEnabled) as? Bool ?? true
+        _claudeModel               = ud.string(forKey: Keys.claudeModel) ?? ""
+        _claudeEffort              = ud.string(forKey: Keys.claudeEffort) ?? ""
+        _codexModel                = ud.string(forKey: Keys.codexModel) ?? ""
+        _codexReasoningEffort      = ud.string(forKey: Keys.codexReasoningEffort) ?? ""
         _latexBuildCommand         = ud.string(forKey: Keys.latexBuildCommand) ?? "latexmk -pdf -interaction=nonstopmode -synctex=1"
         _externalEditorPath        = ud.string(forKey: Keys.externalEditorPath) ?? ""
         _resumeTemplatePath        = ud.string(forKey: Keys.resumeTemplatePath) ?? ""
@@ -99,6 +138,11 @@ import Observation
         static let codexCLIPath                = "codexCLIPath"
         static let claudeCLIPath               = "claudeCLIPath"
         static let preferredAIBackendRaw       = "preferredAIBackendRaw"
+        static let researchEnabled             = "researchEnabled"
+        static let claudeModel                 = "claudeModel"
+        static let claudeEffort                = "claudeEffort"
+        static let codexModel                  = "codexModel"
+        static let codexReasoningEffort        = "codexReasoningEffort"
         static let latexBuildCommand           = "latexBuildCommand"
         static let externalEditorPath          = "externalEditorPath"
         static let resumeTemplatePath          = "resumeTemplatePath"

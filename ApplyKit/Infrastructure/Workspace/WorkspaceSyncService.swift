@@ -116,6 +116,18 @@ enum WorkspaceSyncService {
         } else {
             try application.tailoringPlanData.write(to: tailoringPlanURL, atomically: true, encoding: .utf8)
         }
+        let tailoringBriefURL = appFolder.appendingPathComponent(WorkspaceFiles.tailoringBriefFile)
+        if application.tailoringBriefData.isEmpty {
+            try? FileManager.default.removeItem(at: tailoringBriefURL)
+        } else {
+            try application.tailoringBriefData.write(to: tailoringBriefURL, atomically: true, encoding: .utf8)
+        }
+        let tailoringReviewURL = appFolder.appendingPathComponent(WorkspaceFiles.tailoringReviewFile)
+        if application.tailoringReviewData.isEmpty {
+            try? FileManager.default.removeItem(at: tailoringReviewURL)
+        } else {
+            try application.tailoringReviewData.write(to: tailoringReviewURL, atomically: true, encoding: .utf8)
+        }
         try YAMLFileStore.write(WorkspaceFiles.applicationDTO(from: application, documents: documents, appFolder: appFolder), to: appFolder.appendingPathComponent(WorkspaceFiles.applicationFile))
         try YAMLFileStore.write(WorkspaceFiles.manifestDTO(), to: root.appendingPathComponent(WorkspaceFiles.manifestFile))
     }

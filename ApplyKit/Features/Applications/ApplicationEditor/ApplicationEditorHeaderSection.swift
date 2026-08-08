@@ -27,7 +27,7 @@ extension ApplicationEditorView {
                         Button {
                             copyContext(includeAnalysis: false)
                         } label: {
-                            Label("Copy without JD Analysis", systemImage: "doc.on.clipboard")
+                            Label("Copy without Tailoring Brief", systemImage: "doc.on.clipboard")
                         }
                     } label: {
                         Label("Copy Context", systemImage: "doc.on.clipboard")
@@ -41,9 +41,9 @@ extension ApplicationEditorView {
                     Button {
                         showTailoringSheet = true
                     } label: {
-                        Label("Apply Suggestion", systemImage: "wand.and.stars")
+                        Label("Resume Tailor", systemImage: "wand.and.stars")
                     }
-                    .help("Paste a ChatGPT tailoring suggestion and apply its changes")
+                    .help("Build the tailored résumé from the brief, review the changes, and apply them")
 
                     // Secondary actions: labeled but smaller than the two primary
                     // actions above so they read as less important.
@@ -303,8 +303,15 @@ extension ApplicationEditorView {
         if !application.jobDescription.trimmed.isEmpty {
             parts.append("## Job Description\n\(application.jobDescription)")
         }
-        if includeAnalysis, !application.jdAnalysisText.trimmed.isEmpty {
-            parts.append("## JD Analysis\n\(application.jdAnalysisText)")
+        // The tailoring brief replaced the old freeform analysis; legacy text is
+        // still carried for applications that only have that.
+        if includeAnalysis {
+            let brief = tailoringBriefContextText()
+            if !brief.isEmpty {
+                parts.append(brief)
+            } else if !application.jdAnalysisText.trimmed.isEmpty {
+                parts.append("## JD Analysis\n\(application.jdAnalysisText)")
+            }
         }
         if !application.notes.trimmed.isEmpty {
             parts.append("## Notes\n\(application.notes)")
@@ -326,7 +333,7 @@ extension ApplicationEditorView {
                             systemImage: "doc.badge.plus"
                         )
                     }
-                    .disabled(activityMonitor.state == .running)
+                    .disabled(generatingDocumentKind != nil)
 
                     Button {
                         Task { await generateDocument(.coverLetter, replacingExisting: hasGeneratedDocument(.coverLetter)) }
@@ -336,7 +343,7 @@ extension ApplicationEditorView {
                             systemImage: "envelope.badge"
                         )
                     }
-                    .disabled(activityMonitor.state == .running)
+                    .disabled(generatingDocumentKind != nil)
 
                     Spacer()
                 }

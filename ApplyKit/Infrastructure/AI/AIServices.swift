@@ -112,16 +112,31 @@ enum ClaudePathDetector {
 }
 
 enum CodexService {
-    static func run(prompt: String, codexPath: String, workingDirectory: URL?) async throws -> CommandResult {
+    /// Codex's sandbox has no network, but its native `web_search` tool does —
+    /// it is simply off unless asked for. This is what lets a Codex-backed run
+    /// read the live posting and the résumé references the tailoring rules cite.
+    private static let webSearchArguments = ["-c", "tools.web_search=true"]
+
+    static func run(prompt: String, codexPath: String, workingDirectory: URL?,
+                    allowWebTools: Bool = false, model: String = "",
+                    reasoningEffort: String = "") async throws -> CommandResult {
         let path = codexPath.trimmed
         guard !path.isEmpty else {
             throw WorkflowError.missingCodexPath
         }
 
-        let result = try await Task.detached {
+        var arguments = ["exec"]
+        if allowWebTools { arguments += webSearchArguments }
+        if !model.trimmed.isEmpty { arguments += ["--model", model.trimmed] }
+        if !reasoningEffort.trimmed.isEmpty {
+            arguments += ["-c", "model_reasoning_effort=\"\(reasoningEffort.trimmed)\""]
+        }
+        arguments += ["--skip-git-repo-check", "--sandbox", "read-only", "--color", "never", "-"]
+
+        let result = try await Task.detached { [arguments] in
             try ProcessRunner.run(
                 executablePath: path,
-                arguments: ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never", "-"],
+                arguments: arguments,
                 currentDirectory: workingDirectory,
                 standardInput: prompt
             )
@@ -138,19 +153,33 @@ enum CodexService {
 }
 
 enum ClaudeService {
-    static func run(prompt: String, claudePath: String, workingDirectory: URL?) async throws -> String {
-        try await runCommand(prompt: prompt, claudePath: claudePath, workingDirectory: workingDirectory)
+    /// Tools the CLI may use without a prompt when a run is allowed to research.
+    /// Headless runs auto-deny anything not listed here, so an un-allowlisted
+    /// fetch would simply come back unanswered.
+    private static let webTools = "WebFetch,WebSearch"
+
+    static func run(prompt: String, claudePath: String, workingDirectory: URL?,
+                    allowWebTools: Bool = false, model: String = "",
+                    effort: String = "") async throws -> String {
+        try await runCommand(prompt: prompt, claudePath: claudePath, workingDirectory: workingDirectory,
+                             allowWebTools: allowWebTools, model: model, effort: effort)
             .standardOutput
             .trimmed
     }
 
-    static func runCommand(prompt: String, claudePath: String, workingDirectory: URL?) async throws -> CommandResult {
+    static func runCommand(prompt: String, claudePath: String, workingDirectory: URL?,
+                           allowWebTools: Bool = false, model: String = "",
+                           effort: String = "") async throws -> CommandResult {
         let path = claudePath.trimmed
         guard !path.isEmpty else { throw WorkflowError.missingClaudeCLIPath }
-        let result = try await Task.detached {
+        var arguments = ["-p", "--output-format", "text"]
+        if allowWebTools { arguments += ["--allowedTools", webTools] }
+        if !model.trimmed.isEmpty { arguments += ["--model", model.trimmed] }
+        if !effort.trimmed.isEmpty { arguments += ["--effort", effort.trimmed] }
+        let result = try await Task.detached { [arguments] in
             try ProcessRunner.run(
                 executablePath: path,
-                arguments: ["-p", "--output-format", "text"],
+                arguments: arguments,
                 currentDirectory: workingDirectory,
                 standardInput: prompt
             )

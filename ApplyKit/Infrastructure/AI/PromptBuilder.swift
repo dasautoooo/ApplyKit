@@ -19,60 +19,6 @@ enum PromptBuilder {
         "Purpose: \(purpose.rawValue)\n\nCompany: {{company}}\nJob title: {{job_title}}\n\nJob description:\n{{job_description}}\n\nSelected experience source of truth:\n{{experience_items}}"
     }
 
-    static func jdAnalysisPrompt(application: JobApplication, allExperiences: [ExperienceBullet], employments: [Employment]) -> String {
-        let experienceLines = allExperiences.map { exp in
-            "• \(exp.displayTitle) @ \(exp.company.isEmpty ? "Personal" : exp.company)\(exp.role.isEmpty ? "" : " / \(exp.role)") — \(exp.bulletText.prefix(180)) [Skills: \(exp.skillsText)]"
-        }.joined(separator: "\n")
-        let employmentLines = employments.map { "• \($0.companyName) | \($0.role) | \($0.dateRangeText())" }.joined(separator: "\n")
-        return """
-        You are a career advisor helping the candidate build a strong resume and application strategy. Analyze the following job description and provide a structured assessment.
-
-        Important context:
-        - The experience bullets below are from the candidate's experience bank — a catalogue of past work they can draw from when building their resume. They are NOT the candidate's current resume.
-        - Your role is to help the candidate identify which experiences to highlight and how to position them. Do not critique the candidate's experience; focus on how to leverage it.
-
-        ## Job
-        Company: \(application.companyName)
-        Title: \(application.jobTitle)
-        Location: \(application.location)
-
-        ## Job Description
-        \(application.jobDescription)
-
-        ## Candidate Background
-        Employment history:
-        \(employmentLines.isEmpty ? "None provided." : employmentLines)
-
-        Experience bank (not current resume — these are bullets the candidate can select from):
-        \(experienceLines.isEmpty ? "None provided." : experienceLines)
-
-        ---
-
-        Provide your analysis with ALL of the following sections using markdown (## headers). Be specific, concise, and actionable.
-
-        ## Role Overview
-
-        ## Required Skills & Qualifications
-
-        ## Nice-to-Have Skills
-
-        ## Candidate Fit Assessment
-        Rate the candidate's fit on a scale of 0–10 (increments of 0.5, e.g. 7.5/10). Start the section with the score prominently (e.g. "**8.5/10**"), then explain the rating based on how well the experience bank matches the role's requirements. Focus on strengths and opportunities, not shortcomings.
-
-        ## Skill Gaps
-        Identify skills or qualifications required by the role that are not covered by the experience bank. Be honest and specific, but frame each gap as something to work toward or address in the application strategy, not as a disqualifier.
-
-        ## Resume-Building Recommendations
-        Based on the experience bank, recommend which bullets to highlight and how to frame them for this role. Suggest how to reframe or strengthen existing bullets to better match the job requirements.
-
-        ## Preparation Recommendations
-
-        ## Application Strategy
-
-        ## Key Questions to Ask
-        """
-    }
-
     static func experienceRecommendationPrompt(application: JobApplication, allExperiences: [ExperienceBullet]) -> String {
         let catalogue = allExperiences.map { exp in
             "ID: \(exp.id.uuidString)\nTitle: \(exp.displayTitle)\nCompany: \(exp.company) \(exp.role)\nSkills: \(exp.skillsText)\nBullet: \(exp.bulletText.prefix(200))"
@@ -177,14 +123,36 @@ enum PromptBuilder {
         """
     }
 
-    static func bulletCurationPrompt(application: JobApplication, allExperiences: [ExperienceBullet], employments: [Employment]) -> String {
+    /// Growth suggestions: bullets the candidate could *develop* to close this
+    /// role's gaps. When a tailoring brief exists it supplies the gaps and the
+    /// candidate story, so this stops re-deriving them from the job description.
+    static func bulletCurationPrompt(application: JobApplication, allExperiences: [ExperienceBullet],
+                                     employments: [Employment], brief: TailoringBrief? = nil) -> String {
         let experienceLines = allExperiences.map { exp in
             "ID: \(exp.id.uuidString)\n  • \(exp.displayTitle) @ \(exp.company.isEmpty ? "Personal" : exp.company)\(exp.role.isEmpty ? "" : " / \(exp.role)") — \(exp.bulletText.prefix(200)) [Skills: \(exp.skillsText)]"
         }.joined(separator: "\n")
         let employmentLines = employments.map { "• \($0.companyName) | \($0.role) | \($0.dateRangeText())" }.joined(separator: "\n")
+        let briefBlock: String = {
+            guard let brief else { return "" }
+            let gaps = brief.gaps
+                .filter { $0.gapKind != .presentation }
+                .map { "- [\($0.kind)] \($0.text)\($0.mitigation.map { " — \($0)" } ?? "")" }
+                .joined(separator: "\n")
+            guard !gaps.isEmpty || brief.candidateStory != nil else { return "" }
+            return """
+
+            ## Tailoring Brief (target these, do not re-derive them)
+            \(brief.candidateStory.map { "Candidate story: \($0)" } ?? "")
+            Gaps this role exposes:
+            \(gaps.isEmpty ? "None recorded." : gaps)
+
+            Aim every suggestion at one of these gaps. Skip a gap the candidate cannot credibly bridge from \
+            their existing skills.
+            """
+        }()
         return """
         You are a career advisor helping a candidate build a strong resume for a specific role.
-
+        \(briefBlock)
         Context:
         - The experience bullets below are from the candidate's experience bank — a catalogue of past work. They are NOT the current resume.
         - Produce two types of suggestions:
@@ -360,15 +328,26 @@ enum PromptBuilder {
           "section_order": ["<section names from the vocabulary above>"],
           "ordered_experience_ids": ["<work-bullet ids to include, in final order>"],
           "ordered_project_ids": ["<project ids to include, in final order>"],
+          "summary_rationale": [
+            { "phrase": "<phrase from the summary>", "evidence": "<what backs it>", "signal": "<posting need it serves>", "why_it_earns_space": "<hiring value>" }
+          ],
+          "deliberately_omitted": "<emphasis the suggestion says it left out, or omit>",
           "replacements": [
-            { "experience_id": "<id from the pool>", "text": "<tailored replacement bullet text>", "name": "<short variant label>", "reason": "<why, one line>" }
+            { "experience_id": "<id from the pool>", "text": "<tailored replacement bullet text>", "name": "<short variant label>", "reason": "<why, one line>", "signal": "<Relevance | Technical depth | Impact | Clarity | ATS terminology | Concision | Ownership>", "confirmation_needed": "<fact to verify, or omit>" }
+          ],
+          "drops": [
+            { "experience_id": "<id from the pool>", "reason": "<the suggestion's reason for dropping it>" }
           ],
           "role_descriptions": [
             { "employment_id": "<employment id>", "include": <true to show the role line / false to hide it>, "text": "<optional tailored role-description wording>" }
-          ]
+          ],
+          "readiness": "<Ready to submit | Ready after minor corrections | Needs factual confirmation | Needs layout verification>",
+          "uncertainties": ["<open facts the suggestion flagged>"]
         }
 
         Rules:
+        - The explanatory fields (`summary_rationale`, `deliberately_omitted`, `drops`, `readiness`, `uncertainties`) \
+        carry across only what the suggestion actually says. Do not compose your own reasoning or verdict.
         - Use ONLY ids that appear in the candidate pool. If the suggestion references a bullet you cannot confidently match to a pool id (e.g. a truncated quote), leave it out rather than guessing.
         - `ordered_experience_ids` / `ordered_project_ids` are the FINAL selected sets in the suggestion's stated order; bullets the suggestion drops are simply absent.
         - Put a bullet in `replacements` only when the suggestion gives new wording for it. A replaced bullet should also appear in the appropriate ordered_* list so it stays selected.

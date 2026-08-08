@@ -102,6 +102,77 @@ final class JobImportTests: XCTestCase {
         XCTAssertTrue(content.jobPostingJSON.contains(#""workplaceType":"hybrid""#))
     }
 
+    /// Ashby ships the same body twice on every posting, as HTML and as plain
+    /// text. Taking both stored the description twice and doubled the AI prompt.
+    func testAshbyAPIContentKeepsTheBodyOnceWhenBothFieldsArePresent() throws {
+        let sourceURL = try XCTUnwrap(
+            URL(string: "https://jobs.ashbyhq.com/acme/c22ea4e6-f39b-448c-a9e9-a04445ba18e6"))
+        let request = try XCTUnwrap(ATSJobAPIResolver.request(for: sourceURL))
+        let body = "We are hiring an open source developer to own our IDE plugins."
+        let payload: [String: Any] = [
+            "jobs": [[
+                "id": "c22ea4e6-f39b-448c-a9e9-a04445ba18e6",
+                "title": "Developer, Open Source",
+                "descriptionHtml": "<p>\(body)</p>",
+                "descriptionPlain": body
+            ]]
+        ]
+
+        let content = try XCTUnwrap(ATSJobAPIResolver.content(from: payload, request: request))
+        XCTAssertEqual(content.pageTitle, "Developer, Open Source")
+        XCTAssertTrue(content.visibleText.contains(body))
+        XCTAssertEqual(occurrences(of: body, in: content.visibleText), 1)
+        XCTAssertEqual(occurrences(of: body, in: content.canonicalDescription), 1)
+    }
+
+    /// Boards that only publish the plain-text field must still yield a body.
+    func testAshbyAPIContentFallsBackToPlainTextWhenHTMLIsMissing() throws {
+        let sourceURL = try XCTUnwrap(URL(string: "https://jobs.ashbyhq.com/acme/job-1"))
+        let request = try XCTUnwrap(ATSJobAPIResolver.request(for: sourceURL))
+        let payload: [String: Any] = [
+            "jobs": [[
+                "id": "job-1",
+                "title": "Developer",
+                "descriptionHtml": "   ",
+                "descriptionPlain": "Own the developer tooling roadmap."
+            ]]
+        ]
+
+        let content = try XCTUnwrap(ATSJobAPIResolver.content(from: payload, request: request))
+        XCTAssertTrue(content.visibleText.contains("Own the developer tooling roadmap."))
+    }
+
+    /// A pipe holds 64 KiB. Reading the child's output only after it exits
+    /// deadlocks the moment it writes more than that — which Codex does on any
+    /// long posting, because it echoes the whole prompt back on stderr.
+    func testProcessRunnerDrainsOutputLargerThanThePipeBuffer() throws {
+        let bytes = 300_000
+        let script = "python3 -c \"import sys; sys.stderr.write('e'*\(bytes));"
+            + " sys.stdout.write(sys.stdin.read())\""
+        let prompt = String(repeating: "p", count: bytes)
+
+        let result = try ProcessRunner.run(
+            executablePath: "/bin/zsh",
+            arguments: ["-lc", script],
+            currentDirectory: nil,
+            standardInput: prompt
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.standardError.count, bytes)
+        XCTAssertEqual(result.standardOutput.count, bytes)
+    }
+
+    private func occurrences(of needle: String, in haystack: String) -> Int {
+        var count = 0
+        var search = haystack.startIndex..<haystack.endIndex
+        while let found = haystack.range(of: needle, range: search) {
+            count += 1
+            search = found.upperBound..<haystack.endIndex
+        }
+        return count
+    }
+
     func testResponseParserPreselectsOnlyHighConfidenceMatch() throws {
         let first = UUID()
         let second = UUID()

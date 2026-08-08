@@ -27,42 +27,64 @@ final class AppActivityMonitor {
     var onPersistRecord: ((ActivityRecord) -> Void)?
     var onClearHistory: (() -> Void)?
 
+    /// Work in flight, oldest first. Several operations can run at once — one
+    /// per application being tailored — so the bar reports a count rather than
+    /// pretending there is a single current task.
+    private(set) var running: [(key: String, message: String)] = []
+
     private var collapseTask: Task<Void, Never>?
 
+    var runningCount: Int { running.count }
+
+    func isRunning(key: String) -> Bool { running.contains { $0.key == key } }
+
+    /// `key` identifies the operation so it can be finished precisely and so the
+    /// UI can ask whether one particular thing is busy. Omit it for fire-and-
+    /// forget work; finishing then closes the oldest open operation.
     @MainActor
-    func start(_ message: String) {
+    func start(_ message: String, key: String? = nil) {
         collapseTask?.cancel()
+        running.append((key: key ?? UUID().uuidString, message: message))
         self.message = message
         self.state = .running
     }
 
     @MainActor
-    func succeed(_ message: String = "") {
-        collapseTask?.cancel()
-        let msg = message.isEmpty ? "Done" : message
-        self.message = msg
-        self.state = .success
-        self.lastMessage = msg
-        self.lastState = .success
-        let record = ActivityRecord(timestamp: Date(), message: msg, succeeded: true)
-        history.insert(record, at: 0)
-        if history.count > 50 { history = Array(history.prefix(50)) }
-        onPersistRecord?(record)
-        scheduleCollapse()
+    func succeed(_ message: String = "", key: String? = nil) {
+        finish(message.isEmpty ? "Done" : message, succeeded: true, key: key)
     }
 
     @MainActor
-    func fail(_ message: String) {
+    func fail(_ message: String, key: String? = nil) {
+        finish(message, succeeded: false, key: key)
+    }
+
+    @MainActor
+    private func finish(_ message: String, succeeded: Bool, key: String?) {
         collapseTask?.cancel()
-        self.message = message
-        self.state = .failure
+        if let key, let index = running.firstIndex(where: { $0.key == key }) {
+            running.remove(at: index)
+        } else if key == nil, !running.isEmpty {
+            running.removeFirst()
+        }
+
         self.lastMessage = message
-        self.lastState = .failure
-        let record = ActivityRecord(timestamp: Date(), message: message, succeeded: false)
+        self.lastState = succeeded ? .success : .failure
+        let record = ActivityRecord(timestamp: Date(), message: message, succeeded: succeeded)
         history.insert(record, at: 0)
         if history.count > 50 { history = Array(history.prefix(50)) }
         onPersistRecord?(record)
-        scheduleCollapse()
+
+        // Anything still running keeps the bar in its running state; the outcome
+        // just lands in the history and the last-message line.
+        if let current = running.last {
+            self.message = current.message
+            self.state = .running
+        } else {
+            self.message = message
+            self.state = succeeded ? .success : .failure
+            scheduleCollapse()
+        }
     }
 
     @MainActor
@@ -102,6 +124,17 @@ struct SidebarStatusBar: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                // A count, not an alert: it sits with the other trailing glyphs
+                // and stays in the secondary palette so it doesn't outrank the
+                // message it is counting.
+                if monitor.runningCount > 1 {
+                    Text("\(monitor.runningCount)")
+                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16, height: 16)
+                        .background(Circle().fill(Color(nsColor: .quaternaryLabelColor).opacity(0.5)))
+                        .help("\(monitor.runningCount) tasks running")
+                }
                 if !monitor.history.isEmpty {
                     Image(systemName: "clock.arrow.trianglehead.counterclockwise.rotate.90")
                         .font(.caption2)
@@ -117,6 +150,7 @@ struct SidebarStatusBar: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: monitor.state)
+        .animation(.easeInOut(duration: 0.2), value: monitor.runningCount)
         .animation(.easeInOut(duration: 0.2), value: monitor.message)
     }
 
@@ -180,6 +214,28 @@ struct SidebarStatusBar: View {
             .padding(.bottom, 8)
 
             Divider()
+
+            // What's in flight, before what has finished — with several
+            // applications tailoring at once, this is the part you came for.
+            if !monitor.running.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(monitor.running, id: \.key) { operation in
+                        HStack(alignment: .top, spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                                .frame(width: 12, height: 12)
+                                .padding(.top, 1)
+                            Text(operation.message)
+                                .font(.caption)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                    }
+                }
+                Divider()
+            }
 
             if monitor.history.isEmpty {
                 Text("No activity yet.")

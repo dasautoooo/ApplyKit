@@ -8,6 +8,7 @@ import SwiftUI
 
 struct ApplicationsWorkspaceView: View {
     @Environment(AppDataStore.self) private var store
+    @Environment(TailoringRunner.self) private var tailoringRunner
     @Environment(AppSettings.self) private var settings
 
     @State private var selectedApplicationID: UUID?
@@ -38,7 +39,8 @@ struct ApplicationsWorkspaceView: View {
                         ApplicationRow(
                             application: application,
                             hasResume: flags[application.id]?.resume ?? false,
-                            hasCoverLetter: flags[application.id]?.coverLetter ?? false
+                            hasCoverLetter: flags[application.id]?.coverLetter ?? false,
+                            isTailoring: tailoringRunner.isBusy(application.id)
                         )
                         .selectableRow(isSelected: selectedApplicationID == application.id) {
                             selectedApplicationID = application.id
@@ -126,6 +128,7 @@ struct ApplicationsWorkspaceView: View {
         .sheet(item: $applicationPendingDeletion) { application in
             DeleteApplicationDialog(
                 application: application,
+                applicationOnlyBulletCount: ExperienceScope.owned(by: application.id, in: store.experiences).count,
                 shouldDeleteSourceFiles: $shouldDeleteApplicationSourceFiles,
                 onCancel: {
                     applicationPendingDeletion = nil
@@ -142,7 +145,7 @@ struct ApplicationsWorkspaceView: View {
             JobURLImportSheet(
                 settings: settings,
                 masterResumes: store.masterResumes,
-                experiences: store.experiences,
+                experiences: ExperienceScope.shared(store.experiences),
                 existingApplications: store.applications,
                 onCreate: createImportedApplication
             )
@@ -362,6 +365,7 @@ struct ApplicationsWorkspaceView: View {
         if deletingSourceFiles {
             WorkspaceSyncService.deleteApplicationFiles(application, settings: settings)
         }
+        deleteApplicationScopedExperiences(of: application, deletingSourceFiles: deletingSourceFiles)
         store.documents.removeAll { $0.applicationID == application.id }
         store.aiRuns.removeAll { $0.applicationID == application.id }
         store.applications.removeAll { $0.id == application.id }
@@ -370,6 +374,35 @@ struct ApplicationsWorkspaceView: View {
             selectedApplicationID = nil
         }
         applicationPendingDeletion = nil
+    }
+
+    /// Bullets and wording the Resume Tailor kept private to this application are
+    /// unreachable once it is gone, so they go with it. Their YAML files are only
+    /// removed when the user asked for the application's source files to go too.
+    private func deleteApplicationScopedExperiences(of application: JobApplication, deletingSourceFiles: Bool) {
+        let owned = ExperienceScope.owned(by: application.id, in: store.experiences)
+        var remaining = store.experiences.filter { $0.owningApplicationID != application.id }
+
+        // Variants owned by this application can also hang off shared bullets.
+        var strippedShared: [ExperienceBullet] = []
+        for index in remaining.indices {
+            let variants = remaining[index].variations
+            guard variants.contains(where: { $0.owningApplicationID == application.id }) else { continue }
+            remaining[index].variations = variants.filter { $0.owningApplicationID != application.id }
+            remaining[index].updatedAt = Date()
+            strippedShared.append(remaining[index])
+        }
+
+        guard !owned.isEmpty || !strippedShared.isEmpty else { return }
+        store.experiences = remaining
+        if deletingSourceFiles {
+            for bullet in owned {
+                WorkspaceSyncService.deleteExperienceFile(bullet, remainingExperiences: remaining, settings: settings)
+            }
+        }
+        for bullet in strippedShared {
+            try? WorkspaceSyncService.persistExperience(bullet, allExperiences: remaining, settings: settings)
+        }
     }
 
     private func persist(_ application: JobApplication) {

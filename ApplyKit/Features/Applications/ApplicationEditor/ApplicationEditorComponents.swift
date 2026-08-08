@@ -40,6 +40,11 @@ struct ExperienceWordingRow<Content: ResumeContentModel & Identifiable>: View wh
     let onPersistExperience: (ExperienceBullet) -> Void
     let onPersistApplication: (JobApplication) -> Void
     let onPersistContent: (Content) -> Void
+    /// The application this row is being edited inside, so wording private to
+    /// another application stays hidden. Nil in master-resume editing.
+    var scopeApplicationID: UUID? = nil
+    /// Offered only for an application-scoped bullet: file it in the shared bank.
+    var onPromoteToBank: (() -> Void)? = nil
     var canMoveUp: Bool = false
     var canMoveDown: Bool = false
     var onMoveUp: () -> Void = {}
@@ -79,6 +84,17 @@ struct ExperienceWordingRow<Content: ResumeContentModel & Identifiable>: View wh
                     .help("Move down within this section")
                 }
 
+                if experience.isApplicationScoped {
+                    Text("App-only")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.purple)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color.purple.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .help("This bullet belongs to this application only. It isn't in the experience bank.")
+                }
+
                 Text(selectedVariant == nil ? "Base" : "Variant")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(selectedVariant == nil ? Color.secondary : Color.blue)
@@ -92,10 +108,18 @@ struct ExperienceWordingRow<Content: ResumeContentModel & Identifiable>: View wh
                 LabeledControl("Wording") {
                     Picker("Wording", selection: selectedVariantBinding) {
                         Text("Base").tag(UUID?.none)
-                        ForEach(experience.variations) { variation in
+                        ForEach(visibleVariations) { variation in
                             Text(variation.displayName).tag(UUID?.some(variation.id))
                         }
                     }
+                }
+
+                if experience.isApplicationScoped, let onPromoteToBank {
+                    Button(action: onPromoteToBank) {
+                        Label("Move to Bank", systemImage: "tray.and.arrow.down")
+                    }
+                    .controlSize(.small)
+                    .help("File this bullet in the experience bank so other applications can use it")
                 }
 
                 Button {
@@ -105,14 +129,14 @@ struct ExperienceWordingRow<Content: ResumeContentModel & Identifiable>: View wh
                 }
                 .controlSize(.small)
 
-                if refinePrompt != nil && rowAIBackendPath != nil {
+                if refinePrompt != nil && rowAIBackend != nil {
                     Button {
                         Task { await refineWithAI() }
                     } label: {
                         Label(isRefining ? "Refining…" : "Refine with AI", systemImage: "wand.and.stars")
                     }
                     .controlSize(.small)
-                    .disabled(isRefining || activityMonitor.state == .running)
+                    .disabled(isRefining)
                 }
 
                 if selectedVariant != nil {
@@ -172,9 +196,15 @@ struct ExperienceWordingRow<Content: ResumeContentModel & Identifiable>: View wh
         }
     }
 
+    /// Wordings this context may choose between — shared variants plus any owned
+    /// by the application being edited.
+    private var visibleVariations: [ExperienceVariation] {
+        experience.variations(visibleTo: scopeApplicationID)
+    }
+
     private var selectedVariantID: UUID? {
         guard let id = content.selectedVariantID(for: experience.id),
-              experience.variations.contains(where: { $0.id == id }) else {
+              visibleVariations.contains(where: { $0.id == id }) else {
             return nil
         }
         return id
@@ -182,7 +212,7 @@ struct ExperienceWordingRow<Content: ResumeContentModel & Identifiable>: View wh
 
     private var selectedVariant: ExperienceVariation? {
         guard let selectedVariantID else { return nil }
-        return experience.variations.first { $0.id == selectedVariantID }
+        return visibleVariations.first { $0.id == selectedVariantID }
     }
 
     private var selectedVariantBinding: Binding<UUID?> {
@@ -213,26 +243,15 @@ struct ExperienceWordingRow<Content: ResumeContentModel & Identifiable>: View wh
         )
     }
 
-    private var rowAIBackendPath: (path: String, usesClaude: Bool)? {
-        guard let s = settings else { return nil }
-        let preferClaude = s.preferredAIBackendRaw != "Codex"
-        let claude = s.claudeCLIPath.trimmed.isEmpty ? nil : (s.claudeCLIPath, true)
-        let codex  = s.codexCLIPath.trimmed.isEmpty  ? nil : (s.codexCLIPath,  false)
-        return preferClaude ? (claude ?? codex) : (codex ?? claude)
-    }
+    private var rowAIBackend: AIBackend? { AIBackend.resolve(settings: settings) }
 
     private func runRowAI(prompt: String) async throws -> String {
-        guard let backend = rowAIBackendPath else { throw WorkflowError.missingClaudeCLIPath }
-        if backend.usesClaude {
-            return try await ClaudeService.run(prompt: prompt, claudePath: backend.path, workingDirectory: nil)
-        } else {
-            let result = try await CodexService.run(prompt: prompt, codexPath: backend.path, workingDirectory: nil)
-            return result.standardOutput.trimmed
-        }
+        guard let rowAIBackend else { throw WorkflowError.missingClaudeCLIPath }
+        return try await rowAIBackend.run(prompt: prompt)
     }
 
     private func refineWithAI() async {
-        guard let refinePrompt, rowAIBackendPath != nil, activityMonitor.state != .running else { return }
+        guard let refinePrompt, rowAIBackend != nil, !isRefining else { return }
         await MainActor.run {
             isRefining = true
             activityMonitor.start("Refining bullet with AI…")
@@ -608,6 +627,16 @@ struct CuratedBulletCard: View {
             // Header: type badge + status + bullet editor
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
+                    if suggestion.origin == .recall {
+                        Text("Recalled")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.purple)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.purple.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .help("Drafted from an answer you gave the Resume Tailor")
+                    }
                     // Type badge — both use blue to match the wording section's "Variant" badge
                     if suggestion.isVariation {
                         Text("Variation")
@@ -654,31 +683,51 @@ struct CuratedBulletCard: View {
 
             Divider()
 
-            // Disclosure rows
+            // Disclosure rows — recall drafts describe experience the candidate
+            // already has, so they carry no learning plan or rehearsal story.
             VStack(alignment: .leading, spacing: 0) {
-                CuratedBulletDisclosureRow(label: "Relevance", isExpanded: $showRelevance) {
-                    Text(suggestion.relevance)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
+                if !suggestion.relevance.trimmed.isEmpty {
+                    CuratedBulletDisclosureRow(label: "Relevance", isExpanded: $showRelevance) {
+                        Text(suggestion.relevance)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                    Divider()
                 }
-                Divider()
-                CuratedBulletDisclosureRow(label: "How to Learn", isExpanded: $showHowToLearn) {
-                    Text(suggestion.howToLearn)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
+                if !suggestion.howToLearn.trimmed.isEmpty {
+                    CuratedBulletDisclosureRow(label: "How to Learn", isExpanded: $showHowToLearn) {
+                        Text(suggestion.howToLearn)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                    Divider()
                 }
-                Divider()
-                CuratedBulletDisclosureRow(label: "Your Story", isExpanded: $showStory) {
-                    Text(suggestion.story)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
+                if !suggestion.story.trimmed.isEmpty {
+                    CuratedBulletDisclosureRow(label: "Your Story", isExpanded: $showStory) {
+                        Text(suggestion.story)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                    Divider()
+                }
+                if !suggestion.confirmationNeeded.trimmed.isEmpty {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .imageScale(.small)
+                        Text("Confirm before submitting: \(suggestion.confirmationNeeded)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    Divider()
                 }
             }
-
-            Divider()
 
             // Action buttons — style reflects current state
             HStack(spacing: 8) {

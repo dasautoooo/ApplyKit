@@ -164,7 +164,7 @@ struct DiscoveryWorkspaceView: View {
             JobURLImportSheet(
                 settings: settings,
                 masterResumes: store.masterResumes,
-                experiences: store.experiences,
+                experiences: ExperienceScope.shared(store.experiences),
                 existingApplications: store.applications,
                 initialURL: job.url,
                 onCreate: { draft, resume in

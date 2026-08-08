@@ -74,7 +74,7 @@ extension ExperienceBankView {
             }
 
             HStack {
-                Text("\(filteredExperiences.count) of \(store.experiences.count) items")
+                Text("\(filteredExperiences.count) of \(bankExperiences.count) items")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -92,9 +92,17 @@ extension ExperienceBankView {
         .background(Color(nsColor: .controlBackgroundColor))
     }
 
+    /// The bank's own list: shared bullets only, unless the user picked the
+    /// "Application-only" chip to inspect what the tailor kept scoped.
+    var bankExperiences: [ExperienceBullet] {
+        ExperienceSourceFilter(rawValue: sourceFilter) == .applicationOnly
+            ? store.experiences.filter(\.isApplicationScoped)
+            : ExperienceScope.shared(store.experiences)
+    }
+
     var filteredExperiences: [ExperienceBullet] {
         let query = searchText.trimmed.lowercased()
-        return store.experiences.filter {
+        return bankExperiences.filter {
             matchesSearch($0, query: query)
                 && matchesCompany($0)
                 && matchesType($0)
@@ -133,11 +141,11 @@ extension ExperienceBankView {
     }
 
     var companyOptions: [String] {
-        Array(Set(store.experiences.map(\.sourceTitle))).sorted()
+        Array(Set(bankExperiences.map(\.sourceTitle))).sorted()
     }
 
     var typeOptions: [String] {
-        Array(Set(store.experiences.map { $0.experienceType.trimmed }.filter { !$0.isEmpty })).sorted()
+        Array(Set(bankExperiences.map { $0.experienceType.trimmed }.filter { !$0.isEmpty })).sorted()
     }
 
     var hasActiveFilters: Bool {
@@ -205,6 +213,9 @@ extension ExperienceBankView {
             return !experience.isPersonalProject
         case .personalProjects:
             return experience.isPersonalProject
+        case .applicationOnly:
+            // `bankExperiences` already narrowed the list to scoped bullets.
+            return true
         }
     }
 }

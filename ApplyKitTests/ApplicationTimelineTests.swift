@@ -134,6 +134,22 @@ final class ApplicationTimelineTests: XCTestCase {
         }
     }
 
+    /// A build that appended an adopted entry the target already held wrote the
+    /// same id twice. Loading repairs those files rather than showing the entry
+    /// twice forever.
+    func testDuplicateEntriesInASidecarAreCollapsedOnLoad() throws {
+        let sharedID = UUID()
+        let dto = ApplicationTimelineDTO(events: [
+            ApplicationEventDTO(id: sharedID.uuidString, date: "2026-08-08T04:13:54.330Z", kind: "Created",
+                                fromStatus: nil, toStatus: nil, title: nil, note: nil, inferred: nil),
+            ApplicationEventDTO(id: sharedID.uuidString, date: "2026-08-08T04:13:54.330Z", kind: "Created",
+                                fromStatus: nil, toStatus: nil, title: nil, note: nil, inferred: nil)
+        ])
+        let restored = WorkspaceFiles.makeTimeline(from: dto)
+        XCTAssertEqual(restored.count, 1)
+        XCTAssertEqual(restored.first?.id, sharedID)
+    }
+
     func testLegacyApplicationWithoutASidecarLoadsAnInferredTimeline() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

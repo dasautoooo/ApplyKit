@@ -116,6 +116,16 @@ struct SettingsView: View {
                         }
                     }
 
+                    PreferenceRow("Claude Model") {
+                        AIModelControls(
+                            model: $settings.claudeModel,
+                            effort: $settings.claudeEffort,
+                            effortOptions: ["low", "medium", "high", "xhigh", "max"],
+                            defaultModel: AIBackendDefaults.model(usesClaude: true),
+                            defaultEffort: AIBackendDefaults.effort(usesClaude: true)
+                        )
+                    }
+
                     PreferenceDivider()
 
                     PreferenceRow("Codex CLI") {
@@ -137,6 +147,16 @@ struct SettingsView: View {
                         }
                     }
 
+                    PreferenceRow("Codex Model") {
+                        AIModelControls(
+                            model: $settings.codexModel,
+                            effort: $settings.codexReasoningEffort,
+                            effortOptions: ["minimal", "low", "medium", "high"],
+                            defaultModel: AIBackendDefaults.model(usesClaude: false),
+                            defaultEffort: AIBackendDefaults.effort(usesClaude: false)
+                        )
+                    }
+
                     PreferenceDivider()
 
                     PreferenceRow("Preferred Backend") {
@@ -148,9 +168,19 @@ struct SettingsView: View {
                         .labelsHidden()
                         .fixedSize()
 
-                        Text("Used for Suggest Experiences and Refine with AI. Falls back to the other if the preferred path is not set.")
+                        Text("Used for the Resume Tailor, Suggest Experiences, and Refine with AI. Falls back to the other if the preferred path is not set.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                }
+
+                PreferenceSection(title: "Resume Tailor") {
+                    PreferenceRow("Web Research") {
+                        Toggle("Read the live posting and résumé guidance", isOn: $settings.researchEnabled)
+                        Text("The fit judgement opens the job posting and the public résumé guidance its rules come from. More accurate and more current, but a slower and more expensive run. Turning this off works from the pasted job description alone.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
 

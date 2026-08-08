@@ -36,14 +36,14 @@ extension ApplicationEditorView {
             employments: employments,
             collapseKey: "applicationEditor.collapsed.experienceSource"
         ) {
-            if aiBackendPath != nil {
+            if aiBackend != nil {
                 HStack {
                     Button {
                         Task { await suggestExperiences() }
                     } label: {
                         Label(isSuggestingExperiences ? "Thinking…" : "Suggest Experiences", systemImage: "sparkles")
                     }
-                    .disabled(activityMonitor.state == .running || application.jobDescription.trimmed.isEmpty)
+                    .disabled(isSuggestingExperiences || application.jobDescription.trimmed.isEmpty)
                     .help("Ask AI to recommend which experiences best match the job description")
                     Spacer()
                 }
@@ -74,8 +74,26 @@ extension ApplicationEditorView {
             onPersistExperience: persistExperienceChanges,
             onPersistApplication: persistApplicationChanges,
             onPersistContent: persistApplicationChanges,
+            scopeApplicationID: application.id,
+            onPromoteToBank: promoteToBank,
             collapseKey: "applicationEditor.collapsed.tailorExperience"
         )
+    }
+
+    /// Clears the application scope from a bullet (and any wording it owns) so
+    /// the rest of the app can reuse it.
+    func promoteToBank(_ experience: ExperienceBullet) {
+        guard let index = store.experiences.firstIndex(where: { $0.id == experience.id }) else { return }
+        var promoted = store.experiences[index]
+        promoted.owningApplicationID = nil
+        promoted.variations = promoted.variations.map { variation in
+            var shared = variation
+            if shared.owningApplicationID == application.id { shared.owningApplicationID = nil }
+            return shared
+        }
+        store.experiences[index] = promoted
+        persistExperienceChanges(promoted)
+        activityMonitor.succeed("\"\(promoted.displayTitle)\" moved to the experience bank.")
     }
 
     /// Selected bullets grouped for prompts and cover-letter context (see

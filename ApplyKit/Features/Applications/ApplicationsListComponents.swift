@@ -17,12 +17,27 @@ struct ApplicationRow: View {
     let application: JobApplication
     let hasResume: Bool
     let hasCoverLetter: Bool
+    /// A tailoring run is in flight for this application — it may have been
+    /// started here and left to finish while you moved on to another role.
+    var isTailoring: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(application.displayTitle)
-                .font(.headline)
-                .lineLimit(2)
+            HStack(alignment: .top, spacing: 8) {
+                Text(application.displayTitle)
+                    .font(.headline)
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                // Top-right, clear of the metadata line: this is about the row as
+                // a whole, not about any one field in it.
+                if isTailoring {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.7)
+                        .frame(width: 12, height: 12)
+                        .help("Resume Tailor is working on this application")
+                }
+            }
 
             HStack(spacing: 8) {
                 if application.isArchived {
@@ -36,6 +51,16 @@ struct ApplicationRow: View {
                 Text(application.priorityRaw)
                     .font(.caption)
                     .foregroundStyle(priorityColor)
+                if let fit = application.fitScore {
+                    Text(fitText(fit))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(fitColor(fit))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(fitColor(fit).opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .help(fitHelp(fit))
+                }
                 // Last real activity, not `updatedAt` — that gets re-stamped by every autosave,
                 // so a stray keystroke would make a stalled application look fresh.
                 if let changed = application.lastTimelineChange {
@@ -77,10 +102,31 @@ struct ApplicationRow: View {
         default: .orange
         }
     }
+
+    /// Fit score from the Resume Tailor's brief, e.g. "8.5". A judgment aid, so
+    /// the banding stays coarse.
+    private func fitText(_ score: Double) -> String {
+        score == score.rounded() ? String(Int(score)) : String(format: "%.1f", score)
+    }
+
+    private func fitColor(_ score: Double) -> Color {
+        switch score {
+        case 7...: .green
+        case 5..<7: .orange
+        default: .secondary
+        }
+    }
+
+    private func fitHelp(_ score: Double) -> String {
+        "Resume Tailor fit: \(fitText(score))/10"
+    }
 }
 
 struct DeleteApplicationDialog: View {
     let application: JobApplication
+    /// Bullets the Resume Tailor kept private to this application; they are
+    /// deleted with it, so the count is called out before confirming.
+    var applicationOnlyBulletCount: Int = 0
     @Binding var shouldDeleteSourceFiles: Bool
     let onCancel: () -> Void
     let onDelete: () -> Void
@@ -107,6 +153,13 @@ struct DeleteApplicationDialog: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if applicationOnlyBulletCount > 0 {
+                Text("\(applicationOnlyBulletCount) application-only bullet\(applicationOnlyBulletCount == 1 ? "" : "s") belong\(applicationOnlyBulletCount == 1 ? "s" : "") to this role and will be deleted with it. Move one to the experience bank first to keep it.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             HStack {
                 Spacer()

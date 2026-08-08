@@ -19,7 +19,9 @@ struct MasterResumeEditorView: View {
     @State var previewBuildLog = ""
     @State private var saveDebouncer = Debouncer()
 
-    var experiences: [ExperienceBullet] { store.experiences }
+    /// A master resume is reusable across applications, so bullets scoped to one
+    /// application are never offered here.
+    var experiences: [ExperienceBullet] { ExperienceScope.shared(store.experiences) }
     var employments: [Employment] { store.employments }
 
     var body: some View {

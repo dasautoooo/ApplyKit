@@ -20,9 +20,19 @@ struct JobApplication: Identifiable, Codable, Hashable {
     var nextAction: String
     var notes: String
     var jobDescription: String
+    /// Legacy freeform "JD Analysis" markdown. No longer generated — the Resume
+    /// Tailor's brief replaced it — but kept so older applications can still show
+    /// (and discard) what they had.
     var jdAnalysisText: String
     var curatedSuggestionsData: String
     var tailoringPlanData: String
+    /// Encoded `TailoringBrief` (Stage 1 of the Resume Tailor).
+    var tailoringBriefData: String
+    /// Encoded `TailoringReview` — the check against the rendered PDF.
+    var tailoringReviewData: String
+    /// Fit score the brief gave, mirrored out of `tailoringBriefData` so the
+    /// applications list can show it without decoding the JSON per row.
+    var fitScore: Double?
     var coverLetterNeeded: Bool
     var selectedExperienceIDsText: String
     var selectedProjectIDsText: String
@@ -44,7 +54,7 @@ struct JobApplication: Identifiable, Codable, Hashable {
         companyName: String = "",
         jobTitle: String = "",
         status: ApplicationStatus = .saved,
-        priority: ApplicationPriority = .medium
+        priority: ApplicationPriority = .low
     ) {
         self.id = UUID()
         self.companyName = companyName
@@ -66,6 +76,10 @@ struct JobApplication: Identifiable, Codable, Hashable {
         self.jdAnalysisText = ""
         self.curatedSuggestionsData = ""
         self.tailoringPlanData = ""
+        self.tailoringBriefData = ""
+        self.tailoringReviewData = ""
+        self.tailoringReviewData = ""
+        self.fitScore = nil
         self.coverLetterNeeded = false
         self.selectedExperienceIDsText = ""
         self.selectedProjectIDsText = ""
@@ -87,6 +101,31 @@ struct JobApplication: Identifiable, Codable, Hashable {
 }
 
 extension JobApplication {
+    /// The stored Stage 1 brief, or nil when the tailor hasn't run here yet.
+    var tailoringBrief: TailoringBrief? { TailoringBrief.decode(tailoringBriefData) }
+
+    /// The last review of the rendered PDF, or nil when none has run.
+    var tailoringReview: TailoringReview? { TailoringReview.decode(tailoringReviewData) }
+
+    /// Fields written only by a background run. The editor holds a snapshot that
+    /// can predate the run and never edits these itself, so the stored copy wins
+    /// whenever that snapshot is saved — otherwise applying one suggested change
+    /// would erase the review that suggested it, unapplied siblings and all.
+    mutating func preserveRunOwnedState(from stored: JobApplication) {
+        tailoringReviewData = stored.tailoringReviewData
+    }
+
+    /// Stores a brief and mirrors the score the applications list reads directly.
+    mutating func setTailoringBrief(_ brief: TailoringBrief?) {
+        guard let brief else {
+            tailoringBriefData = ""
+            fitScore = nil
+            return
+        }
+        tailoringBriefData = brief.encoded()
+        fitScore = brief.fitScore
+    }
+
     var displayTitle: String {
         let title = jobTitle.trimmed
         let company = companyName.trimmed

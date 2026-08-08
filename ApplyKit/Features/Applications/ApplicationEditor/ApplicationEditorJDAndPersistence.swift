@@ -13,7 +13,7 @@ extension ApplicationEditorView {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 jobDescriptionSection
-                jdAnalysisSection
+                tailorBriefSection
                 curatedBulletsSection
             }
             .padding(16)
@@ -29,97 +29,61 @@ extension ApplicationEditorView {
         }
     }
 
-    var jdAnalysisSection: some View {
-        DetailPanel("JD Analysis", collapseKey: "applicationEditor.collapsed.jdAnalysis") {
-            Button {
-                Task { await analyzeJD() }
-            } label: {
-                Label(
-                    isAnalyzingJD ? "Analyzing…" : (application.jdAnalysisText.trimmed.isEmpty ? "Analyze" : "Re-analyze"),
-                    systemImage: "brain"
-                )
-            }
-            .disabled(activityMonitor.state == .running || application.jobDescription.trimmed.isEmpty || aiBackendPath == nil)
-            .help(aiBackendPath == nil
-                ? "Configure an AI CLI in Settings → Tools"
-                : application.jobDescription.trimmed.isEmpty
-                    ? "Paste a job description first"
-                    : "Analyze the job description with AI")
-        } content: {
-            if !application.jdAnalysisText.trimmed.isEmpty {
-                JDAnalysisView(text: application.jdAnalysisText)
-            }
-        }
-    }
-
-    func analyzeJD() async {
-        guard aiBackendPath != nil else { return }
-        await MainActor.run {
-            isAnalyzingJD = true
-            activityMonitor.start("Analyzing job description…")
-        }
-        do {
-            let prompt = PromptBuilder.jdAnalysisPrompt(
-                application: application,
-                allExperiences: experiences,
-                employments: employments
-            )
-            let result = try await runAI(prompt: prompt)
-            await MainActor.run {
-                application.jdAnalysisText = result
-                persistApplicationChanges()
-                isAnalyzingJD = false
-                activityMonitor.succeed("JD analysis complete.")
-            }
-        } catch {
-            await MainActor.run {
-                isAnalyzingJD = false
-                activityMonitor.fail(error.localizedDescription)
-            }
-        }
-    }
-
+    /// Growth suggestions: bullets worth *developing* to close the gaps the
+    /// tailoring brief found. Recall drafts (experience you already have) live
+    /// with the questions in the Resume Tailor panel instead.
     var curatedBulletsSection: some View {
         DetailPanel("Experience Gap Suggestions", collapseKey: "applicationEditor.collapsed.gapSuggestions") {
             Button {
                 Task { await curateBullets() }
             } label: {
                 Label(
-                    isCuratingBullets ? "Generating…" : (curatedSuggestions.isEmpty ? "Suggest Bullets" : "Re-generate"),
+                    isCuratingBullets ? "Generating…" : (growthSuggestions.isEmpty ? "Suggest Bullets" : "Re-generate"),
                     systemImage: "sparkles"
                 )
             }
-            .disabled(activityMonitor.state == .running || application.jobDescription.trimmed.isEmpty || aiBackendPath == nil)
-            .help(aiBackendPath == nil
+            .disabled(isCuratingBullets || application.jobDescription.trimmed.isEmpty || aiBackend == nil)
+            .help(aiBackend == nil
                 ? "Configure an AI CLI in Settings → Tools"
                 : application.jobDescription.trimmed.isEmpty
                     ? "Paste a job description first"
-                    : "Suggest new experience bullets based on your experience bank")
+                    : tailoringBrief == nil
+                        ? "Suggest bullets to develop for this role (run Resume Tailor first to target its gaps)"
+                        : "Suggest bullets to develop for the gaps the tailoring brief found")
         } content: {
-            if !curatedSuggestions.isEmpty {
+            if !growthSuggestions.isEmpty {
                 VStack(spacing: 10) {
                     let bulletIDs = Set(experiences.map(\.id))
                     let variantIDsByBullet = Dictionary(uniqueKeysWithValues: experiences.map {
                         ($0.id, Set($0.variations.map(\.id)))
                     })
                     ForEach($curatedSuggestions) { $suggestion in
-                        CuratedBulletCard(
-                            suggestion: $suggestion,
-                            selectedExperienceIDs: application.selectedExperienceIDs,
-                            activeVariants: application.selectedVariantIDs,
-                            existingBulletIDs: bulletIDs,
-                            existingVariantIDsByBullet: variantIDsByBullet,
-                            onAddToResume: { addCuratedToResume(id: suggestion.id) },
-                            onBankOnly: { addCuratedToBank(id: suggestion.id) }
-                        )
+                        if suggestion.origin == .growth {
+                            CuratedBulletCard(
+                                suggestion: $suggestion,
+                                selectedExperienceIDs: application.selectedExperienceIDs,
+                                activeVariants: application.selectedVariantIDs,
+                                existingBulletIDs: bulletIDs,
+                                existingVariantIDsByBullet: variantIDsByBullet,
+                                onAddToResume: { addCuratedToResume(id: suggestion.id) },
+                                onBankOnly: { addCuratedToBank(id: suggestion.id) }
+                            )
+                        }
                     }
                 }
             }
         }
     }
 
+    /// Only growth suggestions — experience worth developing. Recalled facts are
+    /// the opposite (experience you already have) and belong to the tailoring
+    /// brief, which is why this panel means one thing again.
+    var growthSuggestions: [CuratedBulletSuggestion] {
+        curatedSuggestions.filter { $0.origin == .growth }
+    }
+
     func curateBullets() async {
-        guard aiBackendPath != nil else { return }
+        guard aiBackend != nil else { return }
         await MainActor.run {
             isCuratingBullets = true
             activityMonitor.start("Generating experience gap suggestions…")
@@ -128,13 +92,14 @@ extension ApplicationEditorView {
             let prompt = PromptBuilder.bulletCurationPrompt(
                 application: application,
                 allExperiences: experiences,
-                employments: employments
+                employments: employments,
+                brief: tailoringBrief
             )
             let response = try await runAI(prompt: prompt)
             let suggestions = PromptBuilder.parseCuratedSuggestions(from: response, allExperiences: experiences)
             await MainActor.run {
                 curatedSuggestions = suggestions
-                application.curatedSuggestionsData = encodeCuratedSuggestions(suggestions)
+                application.curatedSuggestionsData = encodeCuratedSuggestions(curatedSuggestions)
                 persistApplicationChanges()
                 isCuratingBullets = false
                 if suggestions.isEmpty {
@@ -152,64 +117,76 @@ extension ApplicationEditorView {
     }
 
     func addCuratedToResume(id: UUID) {
-        guard let settings,
-              let idx = curatedSuggestions.firstIndex(where: { $0.id == id }) else { return }
-        let suggestion = curatedSuggestions[idx]
-        commitToBank(suggestion: suggestion, settings: settings)
-        if let sourceID = suggestion.sourceBulletID,
-           let expIdx = store.experiences.firstIndex(where: { $0.id == sourceID }),
-           let variant = store.experiences[expIdx].variations.last {
-            application.setExperience(sourceID, selected: true)
-            application.setVariant(variant.id, for: sourceID)
-            curatedSuggestions[idx].addedBulletID = sourceID
-            curatedSuggestions[idx].addedVariantID = variant.id
-        } else if let newBullet = store.experiences.first(where: { $0.bulletText == suggestion.bulletText }) {
-            application.setExperience(newBullet.id, selected: true)
-            curatedSuggestions[idx].addedBulletID = newBullet.id
-        }
-        application.curatedSuggestionsData = encodeCuratedSuggestions(curatedSuggestions)
-        persistApplicationChanges()
-        activityMonitor.succeed(suggestion.isVariation ? "Wording added and selected for this application." : "Bullet added to resume.")
+        addCurated(id: id, selectForResume: true, owningApplicationID: nil)
     }
 
     func addCuratedToBank(id: UUID) {
+        addCurated(id: id, selectForResume: false, owningApplicationID: nil)
+    }
+
+    private func addCurated(id: UUID, selectForResume: Bool, owningApplicationID: UUID?) {
         guard let settings,
               let idx = curatedSuggestions.firstIndex(where: { $0.id == id }) else { return }
         let suggestion = curatedSuggestions[idx]
-        commitToBank(suggestion: suggestion, settings: settings)
-        curatedSuggestions[idx].addedState = .bankOnly
-        // Store the bullet ID so we know it's been added even without selecting for resume
-        if let sourceID = suggestion.sourceBulletID {
-            curatedSuggestions[idx].addedBulletID = sourceID
-            if let expIdx = store.experiences.firstIndex(where: { $0.id == sourceID }),
-               let variant = store.experiences[expIdx].variations.last {
-                curatedSuggestions[idx].addedVariantID = variant.id
+        guard let committed = commitSuggestion(suggestion, settings: settings, owningApplicationID: owningApplicationID) else { return }
+
+        curatedSuggestions[idx].addedBulletID = committed.bulletID
+        curatedSuggestions[idx].addedVariantID = committed.variantID
+        if selectForResume {
+            if isProjectLikeSelection(store.experiences.first { $0.id == committed.bulletID } ?? ExperienceBullet()) {
+                application.setProject(committed.bulletID, selected: true)
+            } else {
+                application.setExperience(committed.bulletID, selected: true)
             }
-        } else if let newBullet = store.experiences.first(where: { $0.bulletText == suggestion.bulletText }) {
-            curatedSuggestions[idx].addedBulletID = newBullet.id
+            if let variantID = committed.variantID {
+                application.setVariant(variantID, for: committed.bulletID)
+            }
+        } else {
+            curatedSuggestions[idx].addedState = .bankOnly
         }
         application.curatedSuggestionsData = encodeCuratedSuggestions(curatedSuggestions)
         persistApplicationChanges()
-        activityMonitor.succeed(suggestion.isVariation ? "New wording saved to experience bank." : "Bullet saved to experience bank.")
+
+        let scope = owningApplicationID == nil ? "" : " (this application only)"
+        if selectForResume {
+            activityMonitor.succeed(suggestion.isVariation
+                ? "Wording added and selected for this application\(scope)."
+                : "Bullet added to resume\(scope).")
+        } else {
+            activityMonitor.succeed(suggestion.isVariation
+                ? "New wording saved to experience bank."
+                : "Bullet saved to experience bank.")
+        }
     }
 
-    private func commitToBank(suggestion: CuratedBulletSuggestion, settings: AppSettings) {
+    /// Writes a suggestion into the experience store, as a new variant when it
+    /// refines an existing bullet and as a new bullet otherwise. Returns the ids
+    /// it produced so callers don't have to find them by matching text.
+    private func commitSuggestion(_ suggestion: CuratedBulletSuggestion, settings: AppSettings,
+                                  owningApplicationID: UUID?) -> (bulletID: UUID, variantID: UUID?)? {
         if let sourceID = suggestion.sourceBulletID,
            let idx = store.experiences.firstIndex(where: { $0.id == sourceID }) {
             var existing = store.experiences[idx]
             let variant = ExperienceVariation(
                 name: ExperienceVariation.defaultName(existing: existing.variations),
                 bulletText: suggestion.bulletText,
-                notes: curatedNotes(for: suggestion)
+                notes: curatedNotes(for: suggestion),
+                owningApplicationID: owningApplicationID
             )
             existing.variations.append(variant)
+            existing.updatedAt = Date()
             store.experiences[idx] = existing
             try? WorkspaceSyncService.persistExperience(existing, allExperiences: store.experiences, settings: settings)
-        } else {
-            let bullet = ExperienceBullet(bulletText: suggestion.bulletText, notes: curatedNotes(for: suggestion))
-            store.experiences.insert(bullet, at: 0)
-            try? WorkspaceSyncService.persistExperience(bullet, allExperiences: store.experiences, settings: settings)
+            return (existing.id, variant.id)
         }
+        let bullet = ExperienceBullet(
+            bulletText: suggestion.bulletText,
+            notes: curatedNotes(for: suggestion),
+            owningApplicationID: owningApplicationID
+        )
+        store.experiences.insert(bullet, at: 0)
+        try? WorkspaceSyncService.persistExperience(bullet, allExperiences: store.experiences, settings: settings)
+        return (bullet.id, nil)
     }
 
     func encodeCuratedSuggestions(_ suggestions: [CuratedBulletSuggestion]) -> String {
@@ -240,22 +217,14 @@ extension ApplicationEditorView {
         }
     }
 
-    var aiBackendPath: (path: String, usesClaude: Bool)? {
-        guard let s = settings else { return nil }
-        let preferClaude = s.preferredAIBackendRaw != "Codex"
-        let claude = s.claudeCLIPath.trimmed.isEmpty ? nil : (s.claudeCLIPath, true)
-        let codex  = s.codexCLIPath.trimmed.isEmpty  ? nil : (s.codexCLIPath,  false)
-        return preferClaude ? (claude ?? codex) : (codex ?? claude)
-    }
+    var aiBackend: AIBackend? { AIBackend.resolve(settings: settings) }
 
-    func runAI(prompt: String) async throws -> String {
-        guard let backend = aiBackendPath else { throw WorkflowError.missingClaudeCLIPath }
-        if backend.usesClaude {
-            return try await ClaudeService.run(prompt: prompt, claudePath: backend.path, workingDirectory: nil)
-        } else {
-            let result = try await CodexService.run(prompt: prompt, codexPath: backend.path, workingDirectory: nil)
-            return result.standardOutput.trimmed
-        }
+    /// `allowWebTools` lets the run read the live posting and company pages. Only
+    /// the Claude backend can: Codex runs sandboxed read-only with no network, so
+    /// there the flag is ignored (`canResearch` gates the prompt accordingly).
+    func runAI(prompt: String, allowWebTools: Bool = false) async throws -> String {
+        guard let aiBackend else { throw WorkflowError.missingClaudeCLIPath }
+        return try await aiBackend.run(prompt: prompt, allowWebTools: allowWebTools)
     }
 
     var applicationPersistenceFingerprint: String {
@@ -290,6 +259,9 @@ extension ApplicationEditorView {
             application.skillsBlockText,
             application.summaryText,
             application.tailoringPlanData,
+            application.tailoringBriefData,
+            application.tailoringReviewData,
+            application.fitScore.map { "\($0)" } ?? "",
             WorkspaceDateCodec.string(from: application.archivedAt) ?? "",
             application.timelineFingerprint
         ].joined(separator: "\u{1F}")
@@ -305,8 +277,14 @@ extension ApplicationEditorView {
     /// existence. Entries this editor already knew about are left alone, so deleting one sticks.
     func adoptExternalTimelineEvents(into target: inout JobApplication) {
         guard let stored = store.applications.first(where: { $0.id == target.id }) else { return }
-        for event in stored.timeline where !knownTimelineEventIDs.contains(event.id) {
+        // Checked against the target itself, not only against what this editor
+        // has seen: a save can happen before `onAppear` seeds that set (the
+        // initial `onChange` handlers run first), and adopting then would append
+        // entries the target already holds — the same id twice, written to disk.
+        var present = Set(target.timeline.map(\.id))
+        for event in stored.timeline where !knownTimelineEventIDs.contains(event.id) && !present.contains(event.id) {
             target.recordEvent(event)
+            present.insert(event.id)
         }
         knownTimelineEventIDs.formUnion(stored.timeline.map(\.id))
         knownTimelineEventIDs.formUnion(target.timeline.map(\.id))
@@ -325,6 +303,7 @@ extension ApplicationEditorView {
             // Archive state is owned by the applications list (archive/restore), not the
             // editor snapshot; preserve it so a stale snapshot can't revert an archive.
             target.archivedAt = store.applications[idx].archivedAt
+            target.preserveRunOwnedState(from: store.applications[idx])
             store.applications[idx] = target
         }
         if target.id == application.id {
@@ -360,7 +339,7 @@ extension ApplicationEditorView {
     }
 
     func suggestExperiences() async {
-        guard aiBackendPath != nil else { return }
+        guard aiBackend != nil else { return }
         await MainActor.run {
             isSuggestingExperiences = true
             activityMonitor.start("Asking AI to suggest experiences…")

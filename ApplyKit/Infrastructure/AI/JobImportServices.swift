@@ -254,14 +254,17 @@ enum ATSJobAPIResolver {
                           || urlsMatch($0["jobUrl"] as? String, request.sourceURL)
                           || urlsMatch($0["applyUrl"] as? String, request.sourceURL)
                   }) else { return nil }
+            // Ashby returns the same body twice, as HTML and as plain text, on
+            // every posting. Taking both stored the description twice and
+            // doubled the AI prompt.
+            let ashbyHTML = (item["descriptionHtml"] as? String ?? "")
             return makeContent(
                 item: item,
                 request: request,
                 title: item["title"] as? String,
-                descriptions: [
-                    item["descriptionHtml"] as? String,
-                    item["descriptionPlain"] as? String
-                ],
+                descriptions: ashbyHTML.trimmed.isEmpty
+                    ? [item["descriptionPlain"] as? String]
+                    : [ashbyHTML],
                 companyHint: request.companySlug
             )
 

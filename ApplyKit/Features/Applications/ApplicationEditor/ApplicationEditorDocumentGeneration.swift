@@ -204,7 +204,7 @@ extension ApplicationEditorView {
         selectedProjects: [ExperienceBullet],
         settings: AppSettings
     ) async throws -> (tex: String, run: AIRun) {
-        guard let backend = aiBackendPath else { throw WorkflowError.missingClaudeCLIPath }
+        guard let backend = aiBackend else { throw WorkflowError.missingClaudeCLIPath }
         let templateURL = try WorkspaceService.templateURL(kind: .coverLetter, settings: settings)
         let templateText = try String(contentsOf: templateURL, encoding: .utf8)
         let prompt = PromptBuilder.coverLetterPrompt(

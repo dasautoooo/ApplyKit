@@ -2,10 +2,11 @@
 //  ApplicationEditorTailoring.swift
 //  ApplyKit
 //
-//  "Apply a suggestion" flow: paste a ChatGPT tailoring reply, reconcile it into
-//  a TailoringPlan via a local AI call, then apply the resulting changes one-by-one
-//  or all at once. See TailoringPlan.swift and the reconciliation prompt in
-//  PromptBuilder.
+//  Stage 2 of the Resume Tailor: turn an approved brief (or a pasted ChatGPT
+//  reply) into a TailoringPlan via a local AI call, then apply the resulting
+//  changes one-by-one or all at once. Both routes emit the same plan schema —
+//  see TailoringPlan.swift, TailoringPrompts.swift, and the reconciliation
+//  prompt in PromptBuilder.
 //
 
 import AppKit
@@ -23,6 +24,38 @@ struct TailoringChange: Identifiable {
         /// Per-employment role-description line: `include` toggles visibility
         /// (nil = leave as-is), `text` overrides the wording (nil = keep current).
         case roleDescription(employmentID: UUID, include: Bool?, text: String?)
+        /// Create a bullet the plan proposes from a confirmed fact. `toBank`
+        /// decides whether it joins the shared experience bank or stays with
+        /// this application.
+        case newBullet(TailoringPlan.NewBullet, toBank: Bool)
+        /// Take one bullet off this résumé. Only used when the plan names drops
+        /// without also giving a full ordered selection — otherwise the
+        /// selection change already removes it.
+        case drop(experienceID: UUID)
+        /// Not an edit: the plan's readiness verdict and open questions, shown at
+        /// the end of the review list.
+        case verdict
+    }
+
+    /// Which run proposed this — the two are reviewed together but come from
+    /// different places and mean different things.
+    enum Source: Hashable {
+        case build
+        case pdfCheck(round: Int)
+
+        var heading: String {
+            switch self {
+            case .build: "From the build"
+            case .pdfCheck(let round): "From the PDF check #\(round)"
+            }
+        }
+
+        var caption: String {
+            switch self {
+            case .build: "Tailoring the résumé to this role."
+            case .pdfCheck: "Fixing what the rendered file showed."
+            }
+        }
     }
 
     let id: String
@@ -31,10 +64,29 @@ struct TailoringChange: Identifiable {
     let before: String?
     let after: String?
     let blockedReason: String?
-    let action: Action
+    var action: Action
     var applied: Bool
+    /// Clause-by-clause justification, shown under the summary change.
+    var rationale: [TailoringPlan.SummaryClaim] = []
+    /// Which hiring signal a rewrite improves.
+    var signal: String?
+    /// A fact to verify before submitting — advisory, never blocking.
+    var confirmationNeeded: String?
+    var source: Source = .build
 
     var isBlocked: Bool { blockedReason != nil }
+
+    /// True for rows that only report something; they have no Apply button.
+    var isInformational: Bool {
+        if case .verdict = action { return true }
+        return false
+    }
+
+    /// A new bullet is applied one of two ways, so its row offers both.
+    var newBullet: TailoringPlan.NewBullet? {
+        if case .newBullet(let bullet, _) = action { return bullet }
+        return nil
+    }
 }
 
 /// A tailored bullet rewrite resolved against the experience bank.
@@ -84,6 +136,28 @@ extension ApplicationEditorView {
         return parts.joined(separator: "\n\n---\n\n")
     }
 
+    /// The brief and any answers, rendered for the pasted-reply route so an
+    /// outside model starts from the same judgment the app already made.
+    func tailoringBriefContextText() -> String {
+        guard let brief = tailoringBrief else { return "" }
+        var lines: [String] = []
+        if let fit = brief.fitScoreText { lines.append("Fit: \(fit)\(brief.fitConfidence.map { " (\($0) confidence)" } ?? "")") }
+        if let priority = brief.recommendedPriority { lines.append("Recommended priority: \(priority)") }
+        if let tier = brief.investmentTier {
+            lines.append("Investment: \(tier)\(brief.investmentTime.map { " (\($0))" } ?? "")")
+        }
+        if let story = brief.candidateStory { lines.append("Candidate story: \(story)") }
+        if !brief.gaps.isEmpty {
+            lines.append("Gaps:\n" + brief.gaps.map { "- [\($0.kind)] \($0.text)" }.joined(separator: "\n"))
+        }
+        if !brief.answeredQuestions.isEmpty {
+            lines.append("Answered questions:\n" + brief.answeredQuestions
+                .map { "- Q: \($0.question)\n  A: \($0.answer.trimmed)" }
+                .joined(separator: "\n"))
+        }
+        return lines.isEmpty ? "" : "## Tailoring Brief\n\(lines.joined(separator: "\n"))"
+    }
+
     func copyTailoringContext() {
         let pb = NSPasteboard.general
         pb.clearContents()
@@ -91,91 +165,104 @@ extension ApplicationEditorView {
         activityMonitor.succeed("Tailoring context copied. Paste it into ChatGPT.")
     }
 
-    // MARK: - Reconcile
+    // MARK: - Runs
+    //
+    // Both routes hand off to `TailoringRunner`; the resulting plan lands on the
+    // stored record, and `adoptExternalTailoringState` turns it into reviewable
+    // changes here whenever this editor is on screen.
+
+    /// Stage 2: turn the approved brief — including any answers given during the
+    /// clarify loop — into the same reviewable change list the paste route
+    /// produces.
+    func buildTailoringPlan() async {
+        await tailoringRunner.build(applicationID: application.id)
+    }
 
     func reconcileTailoring(pastedReply: String) async {
-        guard aiBackendPath != nil else { return }
-        let reply = pastedReply.trimmed
-        guard !reply.isEmpty else { return }
-        await MainActor.run {
-            isReconcilingTailoring = true
-            activityMonitor.start("Reconciling tailoring suggestion…")
-        }
-        do {
-            let prompt = PromptBuilder.tailoringReconciliationPrompt(
-                pastedReply: reply,
-                application: application,
-                allExperiences: experiences,
-                employments: employments
-            )
-            let response = try await runAI(prompt: prompt)
-            let plan = TailoringPlan.parse(from: response)
-            await MainActor.run {
-                isReconcilingTailoring = false
-                guard let plan, !plan.isEmpty else {
-                    activityMonitor.fail("Couldn't extract any changes from that suggestion. Try re-pasting the full reply.")
-                    return
-                }
-                tailoringPlan = plan
-                tailoringChanges = buildTailoringChanges(from: plan)
-                persistTailoringSession()
-                let count = tailoringChanges.filter { !$0.isBlocked }.count
-                activityMonitor.succeed("Found \(count) change\(count == 1 ? "" : "s") to review.")
-            }
-        } catch {
-            await MainActor.run {
-                isReconcilingTailoring = false
-                activityMonitor.fail(error.localizedDescription)
-            }
-        }
+        await tailoringRunner.reconcile(applicationID: application.id, pastedReply: pastedReply)
     }
 
     // MARK: - Build changes
 
-    func buildTailoringChanges(from plan: TailoringPlan) -> [TailoringChange] {
-        let alreadyApplied = Set(TailoringSession.decode(application.tailoringPlanData)?.appliedChangeIDs ?? [])
+    /// Changes from the plan, followed by any the PDF check produced. Review
+    /// edits carry a `pdf:` id prefix so their applied markers never collide
+    /// with the build's, and a later check can supersede an earlier one.
+    func allTailoringChanges() -> [TailoringChange] {
+        var changes = tailoringPlan.map { buildTailoringChanges(from: $0) } ?? []
+        if let review = storedApplication?.tailoringReview, let edits = review.edits {
+            changes += buildTailoringChanges(from: edits, idPrefix: "pdf\(review.round):",
+                                             source: .pdfCheck(round: review.round))
+        }
+        return changes
+    }
+
+    func buildTailoringChanges(from plan: TailoringPlan, idPrefix: String = "",
+                               source: TailoringChange.Source = .build) -> [TailoringChange] {
+        let session = TailoringSession.decode(application.tailoringPlanData)
+        let alreadyApplied = Set(session?.appliedChangeIDs ?? [])
+        let appliedBefore = session?.appliedBefore ?? [:]
         func applied(_ id: String) -> Bool { alreadyApplied.contains(id) }
 
         var changes: [TailoringChange] = []
 
-        if let summary = plan.summary?.trimmed, !summary.isEmpty, summary != application.summaryText.trimmed {
+        // Applied changes are kept in the list rather than dropped for matching
+        // the state they themselves produced — a row that disappears the moment
+        // you click it reads as work lost, and takes its "Applied" mark with it.
+        // `appliedBefore` is what makes the diff still show what it replaced.
+        let summaryID = idPrefix + "summary"
+        if let summary = plan.summary?.trimmed, !summary.isEmpty,
+           applied(summaryID) || summary != application.summaryText.trimmed {
+            var detail = "Replace the summary with the tailored version."
+            if let omitted = plan.deliberatelyOmitted?.trimmed, !omitted.isEmpty {
+                detail += " Deliberately omitted: \(omitted)"
+            }
+            let previous = appliedBefore[summaryID] ?? application.summaryText
             changes.append(TailoringChange(
-                id: "summary",
+                id: summaryID,
                 title: "Update professional summary",
-                detail: "Replace the summary with the tailored version.",
-                before: application.summaryText.trimmed.isEmpty ? nil : application.summaryText,
+                detail: detail,
+                before: previous.trimmed.isEmpty ? nil : previous,
                 after: summary,
                 blockedReason: nil,
                 action: .summary(summary),
-                applied: applied("summary")
-            ))
+                applied: applied(summaryID),
+                rationale: plan.summaryRationale ?? [],
+                    source: source
+                ))
         }
 
-        if let skills = plan.skillsLatex?.trimmed, !skills.isEmpty, skills != application.skillsBlockText.trimmed {
+        let skillsID = idPrefix + "skills"
+        if let skills = plan.skillsLatex?.trimmed, !skills.isEmpty,
+           applied(skillsID) || skills != application.skillsBlockText.trimmed {
+            let previous = appliedBefore[skillsID] ?? application.skillsBlockText
             changes.append(TailoringChange(
-                id: "skills",
+                id: skillsID,
                 title: "Update skills block",
                 detail: "Replace the LaTeX skills block with the tailored version.",
-                before: application.skillsBlockText.trimmed.isEmpty ? nil : application.skillsBlockText,
+                before: previous.trimmed.isEmpty ? nil : previous,
                 after: skills,
                 blockedReason: nil,
                 action: .skills(skills),
-                applied: applied("skills")
-            ))
+                applied: applied(skillsID),
+                    source: source
+                ))
         }
 
         if let rawOrder = plan.sectionOrder {
+            let orderID = idPrefix + "sectionOrder"
             let order = rawOrder.compactMap { ResumeSectionKind(rawValue: $0) }
-            if !order.isEmpty, order != application.sectionOrder {
+            if !order.isEmpty, applied(orderID) || order != application.sectionOrder {
                 changes.append(TailoringChange(
-                    id: "sectionOrder",
+                    id: orderID,
                     title: "Reorder résumé sections",
                     detail: order.map(\.rawValue).joined(separator: " → "),
-                    before: application.sectionOrder.map(\.rawValue).joined(separator: " → "),
+                    before: appliedBefore[orderID]
+                        ?? application.sectionOrder.map(\.rawValue).joined(separator: " → "),
                     after: order.map(\.rawValue).joined(separator: " → "),
                     blockedReason: nil,
                     action: .sectionOrder(order),
-                    applied: applied("sectionOrder")
+                    applied: applied(orderID),
+                    source: source
                 ))
             }
         }
@@ -183,28 +270,60 @@ extension ApplicationEditorView {
         if plan.orderedExperienceIDs != nil || plan.orderedProjectIDs != nil {
             let workIDs = Set(experiences.filter { isWorkLikeSelection($0) }.map(\.id))
             let projectIDs = Set(experiences.filter { isProjectLikeSelection($0) }.map(\.id))
-            let work = plan.orderedExperienceIDs.map { $0.filter(workIDs.contains) }
+            // Employment ids are legal here: they position a job's role line.
+            let employmentIDs = Set(employments.map(\.id))
+            let work = plan.orderedExperienceIDs.map {
+                $0.filter { workIDs.contains($0) || employmentIDs.contains($0) }
+            }
             let projects = plan.orderedProjectIDs.map { $0.filter(projectIDs.contains) }
 
             var parts: [String] = []
-            if let work { parts.append("\(work.count) experience bullet\(work.count == 1 ? "" : "s")") }
+            if let work {
+                let bullets = work.filter { !employmentIDs.contains($0) }.count
+                parts.append("\(bullets) experience bullet\(bullets == 1 ? "" : "s")")
+            }
             if let projects { parts.append("\(projects.count) project\(projects.count == 1 ? "" : "s")") }
             let selectedSummary = parts.joined(separator: " and ")
 
+            var detail = "Select \(selectedSummary) in the suggested order; drop the rest."
+            if let dropped = dropSummary(plan.drops) { detail += "\n\(dropped)" }
+
             changes.append(TailoringChange(
-                id: "selection",
+                id: idPrefix + "selection",
                 title: "Apply bullet selection & order",
-                detail: "Select \(selectedSummary) in the suggested order; drop the rest.",
+                detail: detail,
                 before: nil,
                 after: nil,
                 blockedReason: nil,
                 action: .selection(work: work, projects: projects),
-                applied: applied("selection")
-            ))
+                applied: applied(idPrefix + "selection"),
+                    source: source
+                ))
+        } else {
+            // A plan can name drops without restating the whole selection — the
+            // PDF check does exactly that. Without this the drop was shown as
+            // prose and could never be applied.
+            let onResume = application.selectedExperienceIDs.union(application.selectedProjectIDs)
+            for drop in plan.drops ?? [] {
+                let id = idPrefix + "drop:\(drop.experienceID.uuidString)"
+                guard let bullet = experiences.first(where: { $0.id == drop.experienceID }),
+                      applied(id) || onResume.contains(drop.experienceID) else { continue }
+                changes.append(TailoringChange(
+                    id: id,
+                    title: "Drop: \(bullet.displayTitle)",
+                    detail: drop.reason ?? "Take this bullet off the résumé.",
+                    before: bullet.bulletText(variantID: application.selectedVariantID(for: bullet.id)),
+                    after: nil,
+                    blockedReason: nil,
+                    action: .drop(experienceID: drop.experienceID),
+                    applied: applied(id),
+                    source: source
+                ))
+            }
         }
 
         for replacement in plan.replacements ?? [] {
-            let id = "replacement:\(replacement.experienceID.uuidString)"
+            let id = idPrefix + "replacement:\(replacement.experienceID.uuidString)"
             guard let bullet = experiences.first(where: { $0.id == replacement.experienceID }) else {
                 changes.append(TailoringChange(
                     id: id,
@@ -217,13 +336,28 @@ extension ApplicationEditorView {
                         experienceID: replacement.experienceID, text: replacement.text,
                         name: replacement.name ?? "", reason: replacement.reason ?? "",
                         originalText: "", isProject: false)),
-                    applied: false
+                    applied: false,
+                    source: source
                 ))
                 continue
             }
             // "Current" reflects the wording this application actually renders —
-            // the selected variant, not the shared base text.
-            let currentText = bullet.bulletText(variantID: application.selectedVariantID(for: bullet.id))
+            // the selected variant, not the shared base text. Once applied, that
+            // *is* the rewrite, so show what it replaced instead.
+            let liveText = bullet.bulletText(variantID: application.selectedVariantID(for: bullet.id))
+            let currentText = applied(id) ? (appliedBefore[id] ?? liveText) : liveText
+
+            // A rewrite that changes nothing is not a rewrite. Models return the
+            // original wording more often than you would think.
+            guard applied(id) || replacement.text.trimmed != liveText.trimmed else { continue }
+
+            // A check on the rendered file can only speak about what was in it.
+            // The prompt says so; this is what makes it true.
+            if case .pdfCheck = source {
+                let onResume = application.selectedExperienceIDs.union(application.selectedProjectIDs)
+                guard applied(id) || onResume.contains(bullet.id) else { continue }
+            }
+
             let resolved = ResolvedReplacement(
                 experienceID: bullet.id,
                 text: replacement.text,
@@ -241,12 +375,16 @@ extension ApplicationEditorView {
                 after: replacement.text,
                 blockedReason: nil,
                 action: .replacement(resolved),
-                applied: applied(id)
-            ))
+                applied: applied(id),
+                signal: replacement.signal?.trimmed.isEmpty == false ? replacement.signal : nil,
+                confirmationNeeded: replacement.confirmationNeeded?.trimmed.isEmpty == false
+                    ? replacement.confirmationNeeded : nil,
+                    source: source
+                ))
         }
 
         for role in plan.roleDescriptions ?? [] {
-            let id = "role:\(role.employmentID.uuidString)"
+            let id = idPrefix + "role:\(role.employmentID.uuidString)"
             guard let employment = employments.first(where: { $0.id == role.employmentID }) else {
                 changes.append(TailoringChange(
                     id: id,
@@ -256,7 +394,8 @@ extension ApplicationEditorView {
                     after: nil,
                     blockedReason: "Employment id not found — it may have changed since you copied the context.",
                     action: .roleDescription(employmentID: role.employmentID, include: role.include, text: role.text),
-                    applied: false
+                    applied: false,
+                    source: source
                 ))
                 continue
             }
@@ -268,36 +407,103 @@ extension ApplicationEditorView {
             // visibility differs from the current state (want-shown while hidden,
             // or want-hidden while shown).
             let inclusionChanges = role.include.map { $0 == currentlyHidden } ?? false
-            guard textChanges || inclusionChanges else { continue }
+            // Once applied, the requested state *is* the current state, so both
+            // flags go false — keep the row anyway rather than have it vanish
+            // under the click that applied it.
+            guard applied(id) || textChanges || inclusionChanges else { continue }
 
+            let wantsText = newText?.isEmpty == false
             var detailParts: [String] = []
-            if inclusionChanges { detailParts.append(role.include == true ? "Show the role-description line" : "Hide the role-description line") }
-            if textChanges { detailParts.append("Update the role-description wording") }
+            if let include = role.include, applied(id) || inclusionChanges {
+                detailParts.append(include ? "Show the role-description line" : "Hide the role-description line")
+            }
+            if wantsText, applied(id) || textChanges { detailParts.append("Update the role-description wording") }
+            if detailParts.isEmpty { detailParts.append("Keep the role-description line as it is") }
 
-            let afterText: String
-            if textChanges { afterText = newText! }
-            else { afterText = role.include == true ? "(show role description)" : "(hide role description)" }
+            let afterText = wantsText ? newText!
+                : (role.include == true ? "(show role description)" : "(hide role description)")
+            let previous = appliedBefore[id]
+                ?? (currentText.isEmpty ? (currentlyHidden ? "(hidden)" : "")
+                    : "\(currentlyHidden ? "(hidden) " : "")\(currentText)")
 
             changes.append(TailoringChange(
                 id: id,
                 title: "Role description: \(employment.companyName)",
                 detail: detailParts.joined(separator: "; ") + ".",
-                before: currentText.isEmpty ? (currentlyHidden ? "(hidden)" : nil) : "\(currentlyHidden ? "(hidden) " : "")\(currentText)",
+                before: previous.isEmpty ? nil : previous,
                 after: afterText,
                 blockedReason: nil,
                 action: .roleDescription(employmentID: employment.id, include: role.include, text: newText),
-                applied: applied(id)
-            ))
+                applied: applied(id),
+                    source: source
+                ))
         }
 
+        for (index, bullet) in (plan.newBullets ?? []).enumerated() {
+            let text = bullet.text.trimmed
+            guard !text.isEmpty else { continue }
+            let id = idPrefix + "newBullet:\(index)"
+            let employment = bullet.employmentID.flatMap { id in employments.first { $0.id == id } }
+            changes.append(TailoringChange(
+                id: id,
+                title: employment.map { "Add bullet: \($0.displayTitle)" } ?? "Add bullet",
+                detail: bullet.reason ?? "A fact you confirmed that stands on its own.",
+                before: nil,
+                after: text,
+                blockedReason: nil,
+                action: .newBullet(bullet, toBank: true),
+                applied: applied(id),
+                confirmationNeeded: bullet.confirmationNeeded?.trimmed.isEmpty == false
+                    ? bullet.confirmationNeeded : nil,
+                    source: source
+                ))
+        }
+
+        if let verdict = verdictChange(from: plan, idPrefix: idPrefix, source: source) { changes.append(verdict) }
+
         return changes
+    }
+
+    /// The plan's drop list, resolved to bullet titles. Nil when it has none.
+    private func dropSummary(_ drops: [TailoringPlan.Drop]?) -> String? {
+        guard let drops, !drops.isEmpty else { return nil }
+        let byID = Dictionary(uniqueKeysWithValues: experiences.map { ($0.id, $0) })
+        let lines = drops.map { drop -> String in
+            let title = byID[drop.experienceID]?.displayTitle ?? "Unknown bullet"
+            return "• \(title)\(drop.reason.map { " — \($0)" } ?? "")"
+        }
+        return "Dropped:\n" + lines.joined(separator: "\n")
+    }
+
+    /// The readiness verdict and open questions as a final, non-applyable row.
+    private func verdictChange(from plan: TailoringPlan, idPrefix: String,
+                               source: TailoringChange.Source) -> TailoringChange? {
+        let readiness = plan.readiness?.trimmed ?? ""
+        let uncertainties = (plan.uncertainties ?? []).map(\.trimmed).filter { !$0.isEmpty }
+        guard !readiness.isEmpty || !uncertainties.isEmpty else { return nil }
+        let detail = uncertainties.isEmpty
+            ? "Nothing left to confirm."
+            : "Still to confirm:\n" + uncertainties.map { "• \($0)" }.joined(separator: "\n")
+        return TailoringChange(
+            id: idPrefix + "verdict",
+            title: readiness.isEmpty ? "Before you submit" : readiness,
+            detail: detail,
+            before: nil,
+            after: nil,
+            blockedReason: nil,
+            action: .verdict,
+            applied: false,
+        source: source
+    )
     }
 
     // MARK: - Apply
 
     func applyTailoringChange(_ change: TailoringChange) {
-        guard !change.isBlocked, !change.applied else { return }
+        guard !change.isBlocked, !change.applied, !change.isInformational else { return }
         switch change.action {
+        case .verdict:
+            return
         case .summary(let text):
             application.summaryText = text
         case .skills(let text):
@@ -315,13 +521,19 @@ extension ApplicationEditorView {
             if let include {
                 application.setRoleDescriptionHidden(!include, for: employmentID)
             }
+        case .newBullet(let bullet, let toBank):
+            applyNewBullet(bullet, toBank: toBank)
+        case .drop(let experienceID):
+            application.setExperience(experienceID, selected: false)
+            application.setProject(experienceID, selected: false)
+            application.setExperienceOrder(application.experienceOrder.filter { $0 != experienceID })
         }
         markApplied(change.id)
         persistApplicationChanges()
     }
 
     func applyAllTailoring() {
-        for change in tailoringChanges where !change.isBlocked && !change.applied {
+        for change in tailoringChanges where !change.isBlocked && !change.applied && !change.isInformational {
             applyTailoringChange(change)
         }
     }
@@ -341,12 +553,60 @@ extension ApplicationEditorView {
         }
         // Rebuild the flat order: use the provided lists where given, otherwise keep
         // the current relative order of that dimension's still-selected bullets.
+        //
+        // The order also carries employment ids, marking where each job's
+        // role-description line sits among its bullets. A plan may place them
+        // itself; when it doesn't, they are put back where they were rather than
+        // dropped — losing them silently resets every role line to the top of
+        // its job.
         let currentOrder = application.experienceOrder
+        let employmentIDs = Set(employments.map(\.id))
         let selectedWork = application.selectedExperienceIDs
         let selectedProjects = application.selectedProjectIDs
-        let workOrder = work ?? currentOrder.filter { selectedWork.contains($0) }
+        var workOrder = work ?? currentOrder.filter {
+            selectedWork.contains($0) || employmentIDs.contains($0)
+        }
+        if work != nil, !workOrder.contains(where: employmentIDs.contains) {
+            workOrder = restoringRoleLines(in: workOrder, from: currentOrder, employmentIDs: employmentIDs)
+        }
         let projectOrder = projects ?? currentOrder.filter { selectedProjects.contains($0) }
         application.setExperienceOrder(workOrder + projectOrder)
+    }
+
+    /// Puts each role-line marker back beside the bullet it used to precede.
+    /// Absent from the order means "first in its job", so an id with nowhere to
+    /// go is simply left out.
+    private func restoringRoleLines(in order: [UUID], from previous: [UUID],
+                                    employmentIDs: Set<UUID>) -> [UUID] {
+        var result = order
+        for (index, id) in previous.enumerated() where employmentIDs.contains(id) {
+            let successor = previous[(index + 1)...].first { result.contains($0) }
+            guard let successor, let position = result.firstIndex(of: successor) else { continue }
+            result.insert(id, at: position)
+        }
+        return result
+    }
+
+    /// Creates a bullet the plan proposed, selects it for this résumé, and puts
+    /// it last in its employment's order. `toBank == false` scopes it to this
+    /// application (see `ExperienceScope`).
+    private func applyNewBullet(_ bullet: TailoringPlan.NewBullet, toBank: Bool) {
+        guard let settings else { return }
+        let employment = bullet.employmentID.flatMap { id in employments.first { $0.id == id } }
+        var created = ExperienceBullet(
+            company: employment?.companyName ?? "",
+            role: employment?.role ?? "",
+            bulletText: bullet.text.trimmed,
+            notes: bullet.reason ?? "",
+            employmentID: employment?.id,
+            owningApplicationID: toBank ? nil : application.id
+        )
+        created.updatedAt = Date()
+        store.experiences.insert(created, at: 0)
+        try? WorkspaceSyncService.persistExperience(created, allExperiences: store.experiences, settings: settings)
+
+        application.setExperience(created.id, selected: true)
+        application.setExperienceOrder(application.experienceOrder + [created.id])
     }
 
     private func applyReplacement(_ replacement: ResolvedReplacement) {
@@ -374,33 +634,47 @@ extension ApplicationEditorView {
     private func markApplied(_ id: String) {
         if let idx = tailoringChanges.firstIndex(where: { $0.id == id }) {
             tailoringChanges[idx].applied = true
+            // Captured before the bullet changes underneath us, so the diff
+            // keeps showing what this rewrite actually replaced.
+            if let before = tailoringChanges[idx].before, appliedBeforeText[id] == nil {
+                appliedBeforeText[id] = before
+            }
         }
         persistTailoringSession()
     }
 
+    /// The plan itself belongs to the stored record (a run may have written it
+    /// while another application was on screen); only the paste box and the
+    /// applied markers come from this editor.
     func persistTailoringSession() {
         let appliedIDs = tailoringChanges.filter(\.applied).map(\.id)
-        let session = TailoringSession(pastedText: tailoringPastedText, plan: tailoringPlan, appliedChangeIDs: appliedIDs)
+        let session = TailoringSession(pastedText: tailoringPastedText, plan: tailoringPlan,
+                                       appliedChangeIDs: appliedIDs,
+                                       appliedBefore: appliedBeforeText)
         application.tailoringPlanData = session.encoded()
+        if let index = store.applications.firstIndex(where: { $0.id == application.id }) {
+            store.applications[index].tailoringPlanData = application.tailoringPlanData
+        }
     }
 
     /// Restore a persisted session (raw paste + plan + applied markers) when the
     /// sheet opens, so multi-round progress survives close / relaunch.
     func restoreTailoringSession() {
-        guard tailoringChanges.isEmpty,
-              let session = TailoringSession.decode(application.tailoringPlanData) else { return }
-        tailoringPastedText = session.pastedText
-        tailoringPlan = session.plan
-        if let plan = session.plan {
-            tailoringChanges = buildTailoringChanges(from: plan)
+        guard let session = TailoringSession.decode(storedApplication?.tailoringPlanData ?? "") else { return }
+        if tailoringPastedText.isEmpty { tailoringPastedText = session.pastedText }
+        appliedBeforeText.merge(session.appliedBefore) { current, _ in current }
+        if tailoringChanges.isEmpty {
+            tailoringChanges = allTailoringChanges()
         }
     }
 
     func clearTailoringSession() {
         tailoringPastedText = ""
-        tailoringPlan = nil
         tailoringChanges = []
         application.tailoringPlanData = ""
+        if let index = store.applications.firstIndex(where: { $0.id == application.id }) {
+            store.applications[index].tailoringPlanData = ""
+        }
         persistApplicationChanges()
     }
 }

@@ -121,6 +121,9 @@ struct ExperienceGroup: Identifiable {
 
 enum ExperienceSourceFilter: String, CaseIterable, Identifiable {
     case all = "All"; case companyExperience = "Company Experience"; case personalProjects = "Personal Projects"
+    /// Bullets kept private to a single application by the Resume Tailor. Hidden
+    /// from every other filter so the bank stays a list of reusable material.
+    case applicationOnly = "Application-only"
     var id: String { rawValue }
 }
 

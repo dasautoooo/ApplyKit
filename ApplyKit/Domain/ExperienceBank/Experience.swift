@@ -25,6 +25,11 @@ struct ExperienceBullet: Identifiable, Codable, Hashable {
     var resumeDisplayName: String
     var notes: String
     var employmentID: UUID?
+    /// Set when the bullet belongs to one application rather than the shared
+    /// bank — a fact recalled during tailoring that the user chose not to file
+    /// away. It still lives in `store.experiences` and renders normally; only
+    /// its visibility is scoped (see `ExperienceScope`).
+    var owningApplicationID: UUID?
     var createdAt: Date
     var updatedAt: Date
 
@@ -46,7 +51,8 @@ struct ExperienceBullet: Identifiable, Codable, Hashable {
         referenceURL: String = "",
         resumeDisplayName: String = "",
         notes: String = "",
-        employmentID: UUID? = nil
+        employmentID: UUID? = nil,
+        owningApplicationID: UUID? = nil
     ) {
         self.id = UUID()
         self.experienceType = experienceType
@@ -67,6 +73,7 @@ struct ExperienceBullet: Identifiable, Codable, Hashable {
         self.resumeDisplayName = resumeDisplayName
         self.notes = notes
         self.employmentID = employmentID
+        self.owningApplicationID = owningApplicationID
         self.createdAt = Date()
         self.updatedAt = Date()
     }
@@ -77,6 +84,10 @@ struct ExperienceVariation: Identifiable, Codable, Equatable {
     var name: String
     var bulletText: String
     var notes: String
+    /// Set when this wording belongs to one application rather than the shared
+    /// bullet — the variant of a bank bullet that a tailoring answer produced
+    /// but the user kept application-only.
+    var owningApplicationID: UUID?
     var createdAt: Date
     var updatedAt: Date
 
@@ -85,6 +96,7 @@ struct ExperienceVariation: Identifiable, Codable, Equatable {
         name: String = "",
         bulletText: String = "",
         notes: String = "",
+        owningApplicationID: UUID? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -92,6 +104,7 @@ struct ExperienceVariation: Identifiable, Codable, Equatable {
         self.name = name
         self.bulletText = bulletText
         self.notes = notes
+        self.owningApplicationID = owningApplicationID
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -101,6 +114,7 @@ struct ExperienceVariation: Identifiable, Codable, Equatable {
         case name
         case bulletText
         case notes
+        case owningApplicationID
         case createdAt
         case updatedAt
     }
@@ -111,6 +125,7 @@ struct ExperienceVariation: Identifiable, Codable, Equatable {
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? "Variant"
         bulletText = try container.decode(String.self, forKey: .bulletText)
         notes = try container.decode(String.self, forKey: .notes)
+        owningApplicationID = try container.decodeIfPresent(UUID.self, forKey: .owningApplicationID)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
@@ -121,6 +136,7 @@ struct ExperienceVariation: Identifiable, Codable, Equatable {
         try container.encode(name, forKey: .name)
         try container.encode(bulletText, forKey: .bulletText)
         try container.encode(notes, forKey: .notes)
+        try container.encodeIfPresent(owningApplicationID, forKey: .owningApplicationID)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
     }
@@ -194,6 +210,14 @@ extension ExperienceBullet {
         get { ExperienceVariation.decode(variationsText) }
         set { variationsText = ExperienceVariation.encode(newValue) }
     }
+
+    /// Variations this application may choose between: the shared ones plus any
+    /// it owns. Another application's private wording stays hidden.
+    func variations(visibleTo applicationID: UUID?) -> [ExperienceVariation] {
+        variations.filter { ExperienceScope.isVisible(owner: $0.owningApplicationID, to: applicationID) }
+    }
+
+    var isApplicationScoped: Bool { owningApplicationID != nil }
 
     func bulletText(variantID: UUID?) -> String {
         guard let variantID,

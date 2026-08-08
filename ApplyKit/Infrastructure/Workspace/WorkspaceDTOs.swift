@@ -61,6 +61,7 @@ struct ApplicationFileDTO: Codable {
     var experienceOrder: [String]?
     var sectionOrder: [String]?
     var skillsBlock: String?; var summary: String?
+    var fitScore: Double?
     var archivedAt: String?; var createdAt: String?; var updatedAt: String?
     var paths: ApplicationPathsDTO; var documents: [ApplicationDocumentLinkDTO]
     enum CodingKeys: String, CodingKey {
@@ -76,6 +77,7 @@ struct ApplicationFileDTO: Codable {
         case experienceOrder = "experience_order"
         case sectionOrder = "section_order"
         case skillsBlock = "skills_block"; case summary
+        case fitScore = "fit_score"
         case archivedAt = "archived_at"; case createdAt = "created_at"; case updatedAt = "updated_at"
         case paths; case documents
     }
@@ -99,24 +101,33 @@ struct ExperienceFileDTO: Codable {
     var id: String; var experienceType: String; var company: String; var role: String; var projectName: String
     var bulletText: String; var variations: [ExperienceVariationDTO]; var skills: [String]
     var roleCategory: String; var impactLevel: String; var usableInResume: Bool; var usableInCoverLetter: Bool
-    var referenceURL: String; var resumeDisplayName: String?; var notes: String?; var employmentID: String?; var createdAt: String?; var updatedAt: String?
+    var referenceURL: String; var resumeDisplayName: String?; var notes: String?; var employmentID: String?
+    var owningApplicationID: String?
+    var createdAt: String?; var updatedAt: String?
     enum CodingKeys: String, CodingKey {
         case id; case experienceType = "experience_type"; case company; case role; case projectName = "project_name"
         case bulletText = "bullet_text"; case variations; case skills; case roleCategory = "role_category"
         case impactLevel = "impact_level"; case usableInResume = "usable_in_resume"
         case usableInCoverLetter = "usable_in_cover_letter"; case referenceURL = "reference_url"
         case resumeDisplayName = "resume_display_name"; case notes
-        case employmentID = "employment_id"; case createdAt = "created_at"; case updatedAt = "updated_at"
+        case employmentID = "employment_id"; case owningApplicationID = "owning_application_id"
+        case createdAt = "created_at"; case updatedAt = "updated_at"
     }
 }
 
 struct ExperienceVariationDTO: Codable {
-    var id: String; var name: String; var bulletText: String; var notes: String; var createdAt: String?; var updatedAt: String?
+    var id: String; var name: String; var bulletText: String; var notes: String
+    var owningApplicationID: String?
+    var createdAt: String?; var updatedAt: String?
     enum CodingKeys: String, CodingKey {
-        case id; case name; case bulletText = "bullet_text"; case notes; case createdAt = "created_at"; case updatedAt = "updated_at"
+        case id; case name; case bulletText = "bullet_text"; case notes
+        case owningApplicationID = "owning_application_id"
+        case createdAt = "created_at"; case updatedAt = "updated_at"
     }
-    init(id: String, name: String, bulletText: String, notes: String, createdAt: String?, updatedAt: String?) {
+    init(id: String, name: String, bulletText: String, notes: String,
+         owningApplicationID: String?, createdAt: String?, updatedAt: String?) {
         self.id = id; self.name = name; self.bulletText = bulletText; self.notes = notes
+        self.owningApplicationID = owningApplicationID
         self.createdAt = createdAt; self.updatedAt = updatedAt
     }
     init(from decoder: Decoder) throws {
@@ -125,6 +136,7 @@ struct ExperienceVariationDTO: Codable {
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Variant"
         bulletText = try c.decode(String.self, forKey: .bulletText)
         notes = try c.decode(String.self, forKey: .notes)
+        owningApplicationID = try c.decodeIfPresent(String.self, forKey: .owningApplicationID)
         createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
         updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt)
     }
@@ -132,6 +144,7 @@ struct ExperienceVariationDTO: Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id); try c.encode(name, forKey: .name)
         try c.encode(bulletText, forKey: .bulletText); try c.encode(notes, forKey: .notes)
+        try c.encodeIfPresent(owningApplicationID, forKey: .owningApplicationID)
         try c.encodeIfPresent(createdAt, forKey: .createdAt); try c.encodeIfPresent(updatedAt, forKey: .updatedAt)
     }
 }

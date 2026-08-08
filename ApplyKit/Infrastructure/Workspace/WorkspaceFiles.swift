@@ -16,6 +16,8 @@ enum WorkspaceFiles {
     static let timelineFile = "timeline.yml"
     static let curatedSuggestionsFile = "curated-suggestions.json"
     static let tailoringPlanFile = "tailoring-suggestion.json"
+    static let tailoringBriefFile = "tailoring-brief.json"
+    static let tailoringReviewFile = "tailoring-review.json"
     static let manifestYAML = "manifest.yml"
     static let resumeDirectory = "resume"
     static let coverLetterDirectory = "cover-letter"
@@ -124,6 +126,7 @@ enum WorkspaceFiles {
             experienceOrder: application.experienceOrder.map(\.uuidString),
             sectionOrder: application.sectionOrder.map(\.rawValue),
             skillsBlock: application.skillsBlockText, summary: application.summaryText,
+            fitScore: application.fitScore,
             archivedAt: WorkspaceDateCodec.string(from: application.archivedAt),
             createdAt: WorkspaceDateCodec.string(from: application.createdAt), updatedAt: WorkspaceDateCodec.string(from: application.updatedAt),
             paths: ApplicationPathsDTO(jobDescription: jobDescriptionFile, notes: notesFile, jdAnalysis: jdAnalysisFile,
@@ -158,13 +161,17 @@ enum WorkspaceFiles {
                 isInferred: item.inferred ?? false
             )
         }
-        // Hand-edited YAML need not be ordered; the app relies on newest-first.
-        return ApplicationTimeline.sortedNewestFirst(events)
+        // Repairs sidecars written by a build that could append an entry twice,
+        // and guards against a hand-edited file doing the same. First occurrence
+        // wins; hand-edited YAML need not be ordered, so sort after.
+        var seen = Set<UUID>()
+        let unique = events.filter { seen.insert($0.id).inserted }
+        return ApplicationTimeline.sortedNewestFirst(unique)
     }
 
     static func makeApplication(from dto: ApplicationFileDTO, appFolder: URL) -> JobApplication {
         var app = JobApplication(companyName: dto.companyName, jobTitle: dto.jobTitle,
-            status: ApplicationStatus(rawValue: dto.status) ?? .saved, priority: ApplicationPriority(rawValue: dto.priority) ?? .medium)
+            status: ApplicationStatus(rawValue: dto.status) ?? .saved, priority: ApplicationPriority(rawValue: dto.priority) ?? .low)
         if let id = UUID(uuidString: dto.id) { app.id = id }
         app.jobURL = dto.jobURL; app.location = dto.location; app.workModeRaw = dto.workMode
         app.sourceMasterResumeID = dto.sourceMasterResumeID.flatMap(UUID.init(uuidString:))
@@ -192,6 +199,11 @@ enum WorkspaceFiles {
         }
         app.curatedSuggestionsData = (try? String(contentsOf: appFolder.appendingPathComponent(curatedSuggestionsFile), encoding: .utf8)) ?? ""
         app.tailoringPlanData = (try? String(contentsOf: appFolder.appendingPathComponent(tailoringPlanFile), encoding: .utf8)) ?? ""
+        app.tailoringBriefData = (try? String(contentsOf: appFolder.appendingPathComponent(tailoringBriefFile), encoding: .utf8)) ?? ""
+        app.tailoringReviewData = (try? String(contentsOf: appFolder.appendingPathComponent(tailoringReviewFile), encoding: .utf8)) ?? ""
+        // The YAML copy is what the list reads; fall back to the sidecar so a
+        // hand-cleared application.yml can't lose the brief's headline number.
+        app.fitScore = dto.fitScore ?? app.tailoringBrief?.fitScore
         // Assigned unconditionally so the entry `JobApplication.init` seeded is replaced, never
         // appended to. Applications saved before timelines existed have no sidecar and get a
         // history inferred from their stored dates instead.
@@ -239,6 +251,7 @@ enum WorkspaceFiles {
             resumeDisplayName: experience.resumeDisplayName.isEmpty ? nil : experience.resumeDisplayName,
             notes: experience.notes.isEmpty ? nil : experience.notes,
             employmentID: experience.employmentID?.uuidString,
+            owningApplicationID: experience.owningApplicationID?.uuidString,
             createdAt: WorkspaceDateCodec.string(from: experience.createdAt), updatedAt: WorkspaceDateCodec.string(from: experience.updatedAt))
     }
 
@@ -250,7 +263,8 @@ enum WorkspaceFiles {
             roleCategory: RoleCategory(rawValue: dto.roleCategory) ?? .generalSoftware,
             impactLevel: ImpactLevel(rawValue: dto.impactLevel) ?? .medium,
             usableInResume: dto.usableInResume, usableInCoverLetter: dto.usableInCoverLetter,
-            referenceURL: dto.referenceURL, employmentID: dto.employmentID.flatMap { UUID(uuidString: $0) })
+            referenceURL: dto.referenceURL, employmentID: dto.employmentID.flatMap { UUID(uuidString: $0) },
+            owningApplicationID: dto.owningApplicationID.flatMap { UUID(uuidString: $0) })
         if let id = UUID(uuidString: dto.id) { exp.id = id }
         exp.resumeDisplayName = dto.resumeDisplayName ?? ""
         exp.notes = dto.notes ?? ""
@@ -261,13 +275,15 @@ enum WorkspaceFiles {
 
     static func variationDTO(from variation: ExperienceVariation) -> ExperienceVariationDTO {
         ExperienceVariationDTO(id: variation.id.uuidString, name: variation.name, bulletText: variation.bulletText,
-            notes: variation.notes, createdAt: WorkspaceDateCodec.string(from: variation.createdAt),
+            notes: variation.notes, owningApplicationID: variation.owningApplicationID?.uuidString,
+            createdAt: WorkspaceDateCodec.string(from: variation.createdAt),
             updatedAt: WorkspaceDateCodec.string(from: variation.updatedAt))
     }
 
     static func makeVariation(from dto: ExperienceVariationDTO) -> ExperienceVariation? {
         guard let id = UUID(uuidString: dto.id) else { return nil }
         return ExperienceVariation(id: id, name: dto.name, bulletText: dto.bulletText, notes: dto.notes,
+            owningApplicationID: dto.owningApplicationID.flatMap { UUID(uuidString: $0) },
             createdAt: WorkspaceDateCodec.date(from: dto.createdAt) ?? Date(),
             updatedAt: WorkspaceDateCodec.date(from: dto.updatedAt) ?? Date())
     }
