@@ -2,9 +2,10 @@
 //  AddBoardSheet.swift
 //  ApplyKit
 //
-//  Add or edit a tracked job board: paste a board/job URL to auto-detect the ATS
-//  provider and company (via ATSBoardResolver.board(for:)), then set optional
-//  keyword filters. Used by DiscoveryWorkspaceView.
+//  Add or edit tracked job boards, three ways: paste a board/job URL to
+//  auto-detect the ATS provider (via ATSBoardResolver.board(for:)), pick a
+//  large employer that runs its own career site, or paste a whole watchlist
+//  and add it in bulk. Used by DiscoveryWorkspaceView.
 //
 
 import SwiftUI
@@ -14,9 +15,12 @@ struct AddBoardSheet: View {
 
     /// When non-nil, the sheet edits an existing board (URL detection is skipped).
     let existing: TrackedBoard?
-    /// Provider ids already tracked, so listed companies show as added.
-    var trackedProviderIDs: Set<String> = []
-    let onSave: (TrackedBoard) -> Void
+    /// Every board already tracked — used to show listed companies as added,
+    /// and to recognize a watchlist name that's already being tracked.
+    var trackedBoards: [TrackedBoard] = []
+    /// Takes a batch: the watchlist mode adds boards by the dozen, and a poll
+    /// per board would put dozens of crawls in flight at once.
+    let onSave: ([TrackedBoard]) -> Void
 
     @State private var urlText = ""
     @State private var detected: TrackedBoard?
@@ -34,6 +38,7 @@ struct AddBoardSheet: View {
     private enum Mode: String, CaseIterable, Identifiable {
         case url = "From URL"
         case company = "Browse Companies"
+        case watchlist = "Paste a List"
         var id: String { rawValue }
     }
 
@@ -42,6 +47,10 @@ struct AddBoardSheet: View {
     private var isBrowsingCompanies: Bool {
         !isEditing && mode == .company && pickedCompany == nil
     }
+
+    private var isPastingList: Bool { !isEditing && mode == .watchlist }
+
+    private var trackedBoardKeys: Set<String> { Set(trackedBoards.map(\.trackingKey)) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -63,6 +72,10 @@ struct AddBoardSheet: View {
 
             if isBrowsingCompanies {
                 companyList
+            } else if isPastingList {
+                // No ScrollView here: the pane's text editor does its own
+                // scrolling, and nesting the two makes both behave badly.
+                WatchlistPane(trackedBoards: trackedBoards, onAdd: onSave)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
@@ -100,22 +113,31 @@ struct AddBoardSheet: View {
             Divider()
             footer
         }
-        .frame(minWidth: 540, idealWidth: 580, minHeight: 460, idealHeight: 520)
+        // Sized for the roomiest mode (a checked watchlist) so switching tabs
+        // never resizes the sheet under the pointer.
+        .frame(minWidth: 560, idealWidth: 640, minHeight: 480, idealHeight: 600)
         .onAppear(perform: prime)
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(isEditing ? "Edit Tracked Board" : "Track a Job Board")
+            Text(isEditing ? "Edit Tracked Board" : "Track Job Boards")
                 .font(.headline)
-            Text(isEditing
-                 ? "Adjust the keyword filters for this board."
-                 : "Paste any ATS board URL, or pick a large employer that runs its own career site.")
+            Text(headerDetail)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(16)
+    }
+
+    private var headerDetail: String {
+        if isEditing { return "Adjust the keyword filters for this board." }
+        switch mode {
+        case .url: return "Paste any ATS board or job URL and the platform is detected for you."
+        case .company: return "Large employers that run their own career site, ready to track in one click."
+        case .watchlist: return "Paste a whole watchlist to see which companies are already trackable, and add them in bulk."
+        }
     }
 
     // MARK: - Company list
@@ -151,7 +173,7 @@ struct AddBoardSheet: View {
     }
 
     private func companyRow(_ company: BuiltInCompany) -> some View {
-        let isTracked = trackedProviderIDs.contains(company.id)
+        let isTracked = trackedBoardKeys.contains(company.trackingKey)
         return HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(company.name).font(.body.weight(.medium))
@@ -216,32 +238,27 @@ struct AddBoardSheet: View {
     private var detailsForm: some View {
         VStack(alignment: .leading, spacing: 14) {
             field("Company name", text: $companyName, placeholder: "Acme Inc.")
-            field("Title includes (comma-separated)", text: $titleKeywords,
-                  placeholder: "engineer, developer", help: "Only postings whose title contains one of these. Empty = all titles.")
-            field("Title excludes (comma-separated)", text: $excludeKeywords,
-                  placeholder: "senior, staff", help: "Drop postings whose title contains any of these.")
-            field("Location includes (comma-separated)", text: $locationKeywords,
-                  placeholder: "remote, new york", help: "Only postings whose location contains one of these. Empty = all locations.")
+            BoardFilterFields(titleKeywords: $titleKeywords,
+                              excludeKeywords: $excludeKeywords,
+                              locationKeywords: $locationKeywords)
         }
     }
 
-    private func field(_ label: String, text: Binding<String>, placeholder: String, help: String? = nil) -> some View {
+    private func field(_ label: String, text: Binding<String>, placeholder: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label).font(.subheadline.weight(.medium))
             TextField(placeholder, text: text).textFieldStyle(.roundedBorder)
-            if let help {
-                Text(help).font(.caption).foregroundStyle(.secondary)
-            }
         }
     }
 
     private var footer: some View {
         HStack {
-            Button("Cancel") { dismiss() }
+            Button(isPastingList ? "Close" : "Cancel") { dismiss() }
                 .keyboardShortcut(.cancelAction)
             Spacer()
-            // While browsing the company list there's nothing staged to commit yet.
-            if !isBrowsingCompanies {
+            // Nothing is staged to commit while browsing the company list, and
+            // the watchlist adds inline as you go rather than on the way out.
+            if !isBrowsingCompanies && !isPastingList {
                 Button(isEditing ? "Save" : "Track Board", action: save)
                     .keyboardShortcut(.defaultAction)
                     .disabled(existing == nil && detected == nil)
@@ -285,7 +302,8 @@ struct AddBoardSheet: View {
             return
         }
         guard let board = ATSBoardResolver.board(for: url) else {
-            detectError = "That URL isn't a recognized job board. Supported: Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Workable, Recruitee, Personio, BambooHR, Breezy, JazzHR, Teamtailor — plus major employers' own career sites."
+            detectError = BoardDetectionHint.hint(for: url)
+                ?? "That URL isn't a recognized job board. Supported: Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Workable, Recruitee, Personio, BambooHR, Breezy, JazzHR, Teamtailor, Eightfold AI, Avature, iCIMS, Cornerstone OnDemand, Phenom — plus major employers' own career sites."
             return
         }
         detected = board
@@ -295,10 +313,10 @@ struct AddBoardSheet: View {
     private func save() {
         guard var board = existing ?? detected else { return }
         board.companyName = companyName.trimmed.isEmpty ? board.slug : companyName.trimmed
-        board.titleKeywords = titleKeywords.commaSeparatedValues
-        board.excludeKeywords = excludeKeywords.commaSeparatedValues
-        board.locationKeywords = locationKeywords.commaSeparatedValues
-        onSave(board)
+        board.applyFilters(titleKeywords: titleKeywords,
+                           excludeKeywords: excludeKeywords,
+                           locationKeywords: locationKeywords)
+        onSave([board])
         dismiss()
     }
 }

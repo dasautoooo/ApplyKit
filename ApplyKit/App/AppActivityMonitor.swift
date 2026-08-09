@@ -49,6 +49,16 @@ final class AppActivityMonitor {
         self.state = .running
     }
 
+    /// Re-words an operation already in flight, for work long enough that a
+    /// static message reads as stuck — a hundred-board discovery sweep counting
+    /// its way up, say. A no-op once the operation has finished.
+    @MainActor
+    func update(_ message: String, key: String) {
+        guard let index = running.firstIndex(where: { $0.key == key }) else { return }
+        running[index].message = message
+        self.message = message
+    }
+
     @MainActor
     func succeed(_ message: String = "", key: String? = nil) {
         finish(message.isEmpty ? "Done" : message, succeeded: true, key: key)

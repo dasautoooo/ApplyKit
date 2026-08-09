@@ -19,8 +19,17 @@ struct TailoringReview: Codable, Equatable {
     /// Measured from the file, never taken from the model.
     var pageCount: Int
     /// The skill's own final-validation checklist, run against the rendered
-    /// document. The score is derived from these, not invented alongside them.
+    /// document. Feeds `findings` and `edits`; the headline score comes from
+    /// `fitScore` instead — see its doc comment.
     var checks: [Check]
+    /// Fit re-judged against what actually ended up on the rendered résumé,
+    /// using the same 0–10 rubric as the Stage 1 brief (`TailoringBrief.fitScore`).
+    /// The build can drift from the plan the brief judged — a rewrite softened,
+    /// a bullet dropped for space — so this is asked for again here rather than
+    /// carried over.
+    var fitScore: Double?
+    /// `low` | `medium` | `high`, same meaning as the brief's.
+    var fitConfidence: String?
     /// `TailoringReadiness` raw value.
     var verdict: String?
     var findings: [Finding]
@@ -110,6 +119,8 @@ struct TailoringReview: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case pageCount = "page_count"
         case checks
+        case fitScore = "fit_score"
+        case fitConfidence = "fit_confidence"
         case verdict
         case findings
         case extractionNote = "extraction_note"
@@ -119,11 +130,13 @@ struct TailoringReview: Codable, Equatable {
         case edits
     }
 
-    init(pageCount: Int, checks: [Check] = [], verdict: String? = nil, findings: [Finding] = [],
-         extractionNote: String? = nil, checkedAt: Date = Date(), documentPath: String = "",
-         round: Int = 1, edits: TailoringPlan? = nil) {
+    init(pageCount: Int, checks: [Check] = [], fitScore: Double? = nil, fitConfidence: String? = nil,
+         verdict: String? = nil, findings: [Finding] = [], extractionNote: String? = nil,
+         checkedAt: Date = Date(), documentPath: String = "", round: Int = 1, edits: TailoringPlan? = nil) {
         self.pageCount = pageCount
         self.checks = checks
+        self.fitScore = fitScore
+        self.fitConfidence = fitConfidence
         self.verdict = verdict
         self.findings = findings
         self.extractionNote = extractionNote
@@ -137,6 +150,8 @@ struct TailoringReview: Codable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         pageCount = (try? c.decodeIfPresent(Int.self, forKey: .pageCount)) ?? 0
         checks = LossyDecode.array(Check.self, from: c, forKey: .checks)
+        fitScore = LossyDecode.double(from: c, forKey: .fitScore)
+        fitConfidence = LossyDecode.string(from: c, forKey: .fitConfidence)
         verdict = LossyDecode.string(from: c, forKey: .verdict)
         findings = LossyDecode.array(Finding.self, from: c, forKey: .findings)
         extractionNote = LossyDecode.string(from: c, forKey: .extractionNote)
@@ -195,22 +210,12 @@ extension TailoringReview {
     var failedChecks: [Check] { checks.filter { $0.checkStatus == .fail } }
     var unclearChecks: [Check] { checks.filter { $0.checkStatus == .unclear } }
 
-    /// How much of the skill's own final validation this document passes, on the
-    /// 0–10 scale the skill uses for fit, in the same 0.5 increments.
-    ///
-    /// Derived rather than asked for: the skill has no document score, so a
-    /// number invented alongside the checks would mean whatever the model felt
-    /// like. This one means exactly "the share of the skill's applicable checks
-    /// that pass". Unclear answers are excluded from the ratio and surfaced
-    /// separately rather than quietly counted as either.
-    var score: Double? {
-        let decided = passedChecks.count + failedChecks.count
-        guard decided > 0 else { return nil }
-        let ratio = Double(passedChecks.count) / Double(decided)
-        return (ratio * 20).rounded() / 2
-    }
+    /// The headline number is `fitScore` itself — the same fit check as Stage 1,
+    /// re-run against what actually ended up on the rendered résumé. `score` is
+    /// kept as the name the UI already reads (mirrors `TailoringBrief.fitScore`).
+    var score: Double? { fitScore }
 
-    /// "8.5/10", in the same form as the fit score.
+    /// "8.5/10", in the same form as the brief's `fitScoreText`.
     var scoreText: String? {
         guard let score else { return nil }
         let rounded = (score * 2).rounded() / 2
@@ -218,7 +223,8 @@ extension TailoringReview {
         return "\(whole)/10"
     }
 
-    /// "7 of 9 checks pass", the sentence behind the score.
+    /// "7 of 9 checks pass", the sentence behind the findings — no longer what
+    /// the score is computed from, but still worth showing alongside it.
     var checksSummary: String? {
         let decided = passedChecks.count + failedChecks.count
         guard decided > 0 else { return nil }

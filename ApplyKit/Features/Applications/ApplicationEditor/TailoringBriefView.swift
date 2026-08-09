@@ -659,6 +659,11 @@ struct TailoringBriefView: View {
                                 .font(.title2.weight(.semibold))
                                 .foregroundStyle(reviewScoreColor(review.score ?? 0))
                         }
+                        if let confidence = review.fitConfidence?.trimmed, !confidence.isEmpty {
+                            Text("\(confidence) confidence")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
                         Text("\(review.pageCount) page\(review.pageCount == 1 ? "" : "s")")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(review.isOverPageBudget ? Color.orange : Color.primary)
@@ -676,7 +681,7 @@ struct TailoringBriefView: View {
                         detailText("Checked before the latest build — run it again for a current answer.")
                     }
                     if let checks = review.checksSummary {
-                        detailText("\(checks) — the score is that share of the skill's final validation.")
+                        detailText("\(checks) in the skill's final validation. The score above is a fit re-check against this rendered document, same rubric as Stage 1.")
                     }
                     if let note = review.extractionNote?.trimmed, !note.isEmpty {
                         detailText(note)
@@ -743,11 +748,13 @@ struct TailoringBriefView: View {
     }
 
     /// Same bands as the fit score, so the two read as one scale.
+    /// Same bands as `fitColor` — this is the same fit score, re-checked
+    /// against the rendered document.
     private func reviewScoreColor(_ score: Double) -> Color {
         switch score {
-        case 9...: .green
-        case 7..<9: .orange
-        default: .red
+        case 7...: .green
+        case 5..<7: .orange
+        default: .secondary
         }
     }
 

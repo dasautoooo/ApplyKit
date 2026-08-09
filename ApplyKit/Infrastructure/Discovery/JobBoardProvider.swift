@@ -56,7 +56,17 @@ enum JobBoardProviders {
         BambooHRProvider.self,
         BreezyProvider.self,
         JazzHRProvider.self,
-        TeamtailorProvider.self
+        TeamtailorProvider.self,
+        // Enterprise ATS platforms
+        EightfoldProvider.self,
+        AvatureProvider.self,
+        ICIMSProvider.self,
+        CornerstoneProvider.self,
+        SuccessFactorsProvider.self,
+        // Last: Phenom tenants live on their own domains, so it has to match on
+        // URL *shape* rather than host. That's the loosest test here, and it
+        // must never win a URL a host-specific provider would have claimed.
+        PhenomProvider.self
     ]
 
     static func provider(id: String) -> (any JobBoardProvider.Type)? {

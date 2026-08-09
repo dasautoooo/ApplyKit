@@ -255,13 +255,16 @@ final class ResumeTailorTests: XCTestCase {
         XCTAssertTrue(review.contains("you may not add material that is not"))
     }
 
-    func testTheScoreIsDerivedFromTheSkillsOwnChecklist() throws {
-        // Seven answerable checks, five passing — the score is that share, and
-        // nothing the model asserted on its own.
+    func testTheScoreIsAFitReCheckTheSameAsStageOne() throws {
+        // The score is asked for directly, same as the brief — not derived from
+        // the checklist below, which still drives findings/checksSummary but no
+        // longer the headline number.
         let response = """
         {
           "page_count": 9,
           "verdict": "Ready after minor corrections",
+          "fit_score": 7,
+          "fit_confidence": "medium",
           "checks": [
             { "section": "Two-page and rewrite checks", "question": "Is actual or estimated length at most two pages?", "status": "pass" },
             { "section": "Engineering signal", "question": "Do the first bullets in each role carry the strongest relevant evidence?", "status": "pass" },
@@ -279,18 +282,21 @@ final class ResumeTailorTests: XCTestCase {
         XCTAssertEqual(review.passedChecks.count, 5)
         XCTAssertEqual(review.failedChecks.count, 2)
         XCTAssertEqual(review.unclearChecks.count, 1, "Unclear is kept, not counted as a pass or a fail")
-        // 5 of 7 decided = 7.142… → 7.0 on the skill's half-point scale.
-        XCTAssertEqual(review.score, 7.0)
+        XCTAssertEqual(review.fitScore, 7)
+        XCTAssertEqual(review.fitConfidence, "medium")
+        XCTAssertEqual(review.score, 7, "The headline score is the fit re-check, not the checklist ratio (which would be 5/7 here)")
         XCTAssertEqual(review.scoreText, "7/10")
         XCTAssertEqual(review.checksSummary, "5 of 7 skill checks pass, 1 unclear")
         XCTAssertEqual(review.pageCount, 2, "Length comes from the file, not the model's claim of 9")
         XCTAssertTrue(review.summary.contains("Check #3"))
 
-        // No answerable checks means no score, rather than a made-up one.
-        let empty = try XCTUnwrap(TailoringReview.parse(from: #"{"verdict": "Needs layout verification"}"#,
-                                                        pageCount: 2, documentPath: "", round: 1))
+        // No fit_score in the reply means no score, rather than a made-up one —
+        // even when every check passed.
+        let empty = try XCTUnwrap(TailoringReview.parse(
+            from: #"{"verdict": "Needs layout verification", "checks": [{"question": "Q", "status": "pass"}]}"#,
+            pageCount: 2, documentPath: "", round: 1))
         XCTAssertNil(empty.score)
-        XCTAssertNil(empty.checksSummary)
+        XCTAssertNotNil(empty.checksSummary, "Checks still summarize independently of the score")
     }
 
     /// Applying a suggestion saves the editor's snapshot of the application. That
@@ -316,19 +322,43 @@ final class ResumeTailorTests: XCTestCase {
         XCTAssertEqual(snapshot.summaryText, "Tailored summary", "…and the edit being saved still lands")
     }
 
-    func testTheReviewPromptAsksForTheSkillsChecklistRatherThanAScore() {
+    func testTheReviewPromptRunsTheChecklistAndReJudgesFitTheSameAsStageOne() {
         let review = PromptBuilder.tailoringReviewPrompt(
             application: JobApplication(companyName: "Example", jobTitle: "iOS Engineer"),
             brief: nil,
             rendered: ResumePDFInspector.Rendered(pageCount: 2, pages: ["a", "b"]),
             renderedExperiences: [], employments: [], globalSkillsBlock: ""
         )
-        // It runs the skill's checklist, quoting the skill's questions...
+        // It still runs the skill's checklist, quoting the skill's questions...
         XCTAssertTrue(review.contains("Are roles reverse chronological?"))
         XCTAssertTrue(review.contains("quoting the question as the checklist"))
-        XCTAssertTrue(review.contains("ApplyKit scores the document from these answers"))
-        // ...and is never asked to invent a number of its own.
-        XCTAssertFalse(review.contains("\"score\": 8.5"), "The model must not be handed a score to fill in")
+        // ...and the score is the same fit rubric Stage 1 uses, asked for directly.
+        XCTAssertTrue(review.contains("\"fit_score\": 7.5"))
+        XCTAssertTrue(review.contains("\"fit_confidence\""))
+        XCTAssertTrue(review.contains(PromptBuilder.fitReassessmentRules),
+                      "Same fit rubric text as Stage 1, not a paraphrase")
+        XCTAssertTrue(review.contains("Score fit again from what this rendered document actually claims"))
+    }
+
+    func testTheReviewFitRubricIsTheSameSkillTextAsStageOnes() {
+        // Both `fitAndEffortRules` (Stage 1) and `fitReassessmentRules` (the PDF
+        // check) quote `ResumeTailorSkill.fitAssessment` verbatim — one rubric,
+        // not two hand-written copies that can drift apart.
+        XCTAssertTrue(PromptBuilder.fitAndEffortRules.contains(ResumeTailorSkill.fitAssessment))
+        XCTAssertTrue(PromptBuilder.fitReassessmentRules.contains(ResumeTailorSkill.fitAssessment))
+    }
+
+    func testTheReviewPromptShowsStageOnesScoreOnlyAsReference() throws {
+        let brief = try XCTUnwrap(TailoringBrief.parse(from: #"{"fit_score": 6, "fit_confidence": "low"}"#))
+        let review = PromptBuilder.tailoringReviewPrompt(
+            application: JobApplication(companyName: "Example", jobTitle: "iOS Engineer"),
+            brief: brief,
+            rendered: ResumePDFInspector.Rendered(pageCount: 2, pages: ["a"]),
+            renderedExperiences: [], employments: [], globalSkillsBlock: ""
+        )
+        XCTAssertTrue(review.contains("Fit: 6/10 (low confidence)"))
+        XCTAssertTrue(review.contains("for reference only"))
+        XCTAssertTrue(review.contains("re-score from what actually got built, not from this"))
     }
 
     /// Role-description lines are per-application state ApplyKit owns, so the

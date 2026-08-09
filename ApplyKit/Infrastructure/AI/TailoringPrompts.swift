@@ -100,6 +100,19 @@ extension PromptBuilder {
     only as a gap. Never fold it into the score, and never ask about it.
     """
 
+    /// The fit-assessment half of `fitAndEffortRules`, without the
+    /// priority/investment/competitiveness sections that only apply to the
+    /// go/no-go decision Stage 1 already made. Used by the PDF check to
+    /// re-score fit with the same rubric, against what actually got built.
+    static let fitReassessmentRules = """
+    \(ResumeTailorSkill.fitAssessment)
+
+    \(ResumeTailorSkill.fitLanguage)
+
+    Logistics — location, work authorization, work mode, compensation, timing — are the candidate's own \
+    business and are already known to them. Never fold logistics into the score.
+    """
+
     /// How to write the tailored résumé — SKILL.md's Stage 2 plus the page
     /// budget and explanation rules from `references/output-and-validation.md`.
     static let buildRules = """
@@ -730,6 +743,7 @@ extension PromptBuilder {
         ## The candidate story this résumé is meant to carry
         \(story?.isEmpty == false ? story! : "Not recorded.")
 
+        \(brief?.fitScoreText.map { "## Stage 1's fit judgment (for reference only — re-score from what actually got built, not from this)\nFit: \($0)\(brief?.fitConfidence.map { " (\($0) confidence)" } ?? "")\n" } ?? "")
         ## Measured from the file
         - Pages: \(rendered.pageCount)
         - Text extraction: \(rendered.isTextEmpty
@@ -776,6 +790,14 @@ extension PromptBuilder {
 
         \(ResumeTailorSkill.outputValidation)
 
+        # Re-judging fit
+
+        The build can drift from what Stage 1 judged — a rewrite came out softer, a bullet got cut for space, \
+        wording lost precision. Score fit again from what this rendered document actually claims, using the same \
+        rubric Stage 1 used:
+
+        \(fitReassessmentRules)
+
         ---
 
         Judge only what the rendered file can show you. You cannot see fonts, margins, or colour, so do not \
@@ -806,6 +828,8 @@ extension PromptBuilder {
               "note": "<the evidence in the rendered document, or why it is unclear>"
             }
           ],
+          "fit_score": 7.5,
+          "fit_confidence": "low | medium | high",
           "verdict": "Ready to submit | Ready after minor corrections | Needs factual confirmation | Needs layout verification",
           "extraction_note": "<what the extracted text says about ATS readability, one line>",
           "findings": [
@@ -837,8 +861,10 @@ extension PromptBuilder {
         and report every question you can actually answer from the file, quoting the question as the checklist \
         words it. Mark `pass`, `fail`, or `unclear`, and put the evidence in `note`. Omit questions the rendered \
         document cannot answer — the ones about how long the work took, or about facts only the candidate can \
-        confirm — rather than guessing at them. ApplyKit scores the document from these answers, so an honest \
-        `unclear` is worth more than a confident guess.
+        confirm — rather than guessing at them. An honest `unclear` is worth more than a confident guess.
+        - `fit_score` and `fit_confidence` are the fit re-check above — judge them from what this rendered \
+        document actually says, not from the brief's earlier score or the plan that produced it. A résumé that \
+        lost its strongest evidence to a page-budget cut should score lower here than Stage 1 scored the plan.
         - In `findings`, name a bullet by its opening words, not by its id — these sentences are read by a person. \
         Ids belong in `edits`, where they are applied by machine.
         - `blocker` means do not submit it like this: over the two-page cap, a section missing, text that does \
@@ -922,6 +948,8 @@ extension PromptBuilder {
     static let reviewSchemaSummary = """
     {
       "checks": [{ "section": "...", "question": "...", "status": "pass | fail | unclear", "note": "..." }],
+      "fit_score": 7.5,
+      "fit_confidence": "low | medium | high",
       "verdict": "Ready to submit | Ready after minor corrections | Needs factual confirmation | Needs layout verification",
       "extraction_note": "...",
       "findings": [{ "severity": "blocker | fix | note", "text": "...", "fix": "..." }]

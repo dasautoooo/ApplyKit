@@ -28,12 +28,23 @@ final class JobDiscoveryService {
         var enrichmentsByKey: [String: DiscoveredPosting] = [:]
     }
 
-    /// Poll every board sequentially. `existingApplicationKeys` are the normalized
-    /// URL keys of current applications; `existingDiscovered` are prior inbox rows
-    /// (any state). A posting is emitted only when its dedup key is unseen in both.
+    /// How many boards are polled at once. They sit on different hosts, so this
+    /// isn't hammering anyone — but each board can itself fan out (Workday
+    /// subdivides by facet, Phenom pages), so the ceiling stays modest.
+    static let maxConcurrentBoards = 6
+
+    /// Polls every board, up to `maxConcurrentBoards` at a time, then folds the
+    /// results together **in board order**. Fetching is the slow part and is
+    /// concurrent; dedup stays sequential and ordered, so which board gets
+    /// credit for a posting two boards both list doesn't depend on the network.
+    ///
+    /// `existingApplicationKeys` are the normalized URL keys of current
+    /// applications; `existingDiscovered` are prior inbox rows (any state). A
+    /// posting is emitted only when its dedup key is unseen in both.
     func refresh(boards: [TrackedBoard],
                  existingApplicationKeys: Set<String>,
-                 existingDiscovered: [DiscoveredJob]) async -> RefreshOutcome {
+                 existingDiscovered: [DiscoveredJob],
+                 onProgress: (@MainActor (Int, Int) -> Void)? = nil) async -> RefreshOutcome {
         var seenKeys = existingApplicationKeys
         seenKeys.formUnion(existingDiscovered.map(\.dedupeKey))
 
@@ -44,9 +55,13 @@ final class JobDiscoveryService {
         var enrichmentsByKey: [String: DiscoveredPosting] = [:]
         let existingKeys = Set(existingDiscovered.map(\.dedupeKey))
 
+        let fetched = await fetchAll(boards, onProgress: onProgress)
+
         for (index, board) in boards.enumerated() {
-            do {
-                let postings = try await JobBoardProviders.listJobs(for: board)
+            switch fetched[index] {
+            case .failure(let message):
+                errors.append("\(board.displayName): \(message)")
+            case .success(let postings):
                 // Record keys from the *unfiltered* listing: a posting the board
                 // still lists but the board's keywords now reject is still open,
                 // and must not be mistaken for one that was taken down.
@@ -61,14 +76,59 @@ final class JobDiscoveryService {
                 }
                 newJobs.append(contentsOf: Self.filterAndDedupe(postings: postings, board: board, seenKeys: &seenKeys))
                 updatedBoards[index].lastPolledAt = Date()
-            } catch {
-                errors.append("\(board.displayName): \(error.localizedDescription)")
+            case .none:
+                continue
             }
         }
 
         return RefreshOutcome(boards: updatedBoards, newJobs: newJobs,
                               errors: errors, liveKeysByBoard: liveKeysByBoard,
                               enrichmentsByKey: enrichmentsByKey)
+    }
+
+    private enum Fetch {
+        case success([DiscoveredPosting])
+        /// The message rather than the error: `Error` isn't `Sendable`, and this
+        /// is all the caller ever shows.
+        case failure(String)
+    }
+
+    /// Runs the listing calls with a fixed number in flight, refilling as each
+    /// finishes. Results come back keyed by the board's index so the caller can
+    /// process them in the original order.
+    private func fetchAll(_ boards: [TrackedBoard],
+                          onProgress: (@MainActor (Int, Int) -> Void)?) async -> [Int: Fetch] {
+        guard !boards.isEmpty else { return [:] }
+        var results: [Int: Fetch] = [:]
+        var completed = 0
+
+        await withTaskGroup(of: (Int, Fetch).self) { group in
+            var next = 0
+            func addTask(_ index: Int) {
+                let board = boards[index]
+                group.addTask {
+                    do { return (index, .success(try await JobBoardProviders.listJobs(for: board))) }
+                    catch { return (index, .failure(error.localizedDescription)) }
+                }
+            }
+            while next < min(Self.maxConcurrentBoards, boards.count) {
+                addTask(next)
+                next += 1
+            }
+            while let (index, outcome) = await group.next() {
+                results[index] = outcome
+                completed += 1
+                if let onProgress {
+                    let done = completed
+                    await MainActor.run { onProgress(done, boards.count) }
+                }
+                if next < boards.count {
+                    addTask(next)
+                    next += 1
+                }
+            }
+        }
+        return results
     }
 
     /// Backfills fields that were missing on rows discovered earlier, from the current

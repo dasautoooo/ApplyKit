@@ -53,4 +53,13 @@ struct TrackedBoard: Identifiable, Codable, Hashable {
     var displayName: String {
         companyName.trimmed.isEmpty ? slug : companyName
     }
+
+    /// Identity for "is this company already tracked?". Provider *and* tenant:
+    /// the provider alone would mark every Eightfold company tracked once one
+    /// of them was, and the slug alone would collide across platforms.
+    var trackingKey: String { TrackedBoard.trackingKey(kindRaw: kindRaw, slug: slug) }
+
+    static func trackingKey(kindRaw: String, slug: String) -> String {
+        "\(kindRaw):\(slug.lowercased())"
+    }
 }

@@ -33,11 +33,21 @@ enum DiscoveryCoordinator {
         let boards = only ?? store.trackedBoards
         guard !boards.isEmpty else { return }
         let subject = boards.count == 1 ? boards[0].displayName : "\(boards.count) boards"
-        monitor.start("Checking \(subject) for new jobs…")
+        let key = "discovery-refresh"
+        monitor.start("Checking \(subject) for new jobs…", key: key)
         let appKeys = Set(store.applications.compactMap { JobURLNormalizer.duplicateKey(for: $0.jobURL) })
+        // A hundred boards takes minutes; a bar that just says "checking" for
+        // all of it looks stuck.
+        var progress: (@MainActor (Int, Int) -> Void)?
+        if boards.count > 1 {
+            progress = { done, total in
+                monitor.update("Checking boards for new jobs… \(done) of \(total)", key: key)
+            }
+        }
         let outcome = await service.refresh(boards: boards,
                                             existingApplicationKeys: appKeys,
-                                            existingDiscovered: store.discoveredJobs)
+                                            existingDiscovered: store.discoveredJobs,
+                                            onProgress: progress)
 
         let boardByID = Dictionary(uniqueKeysWithValues: outcome.boards.map { ($0.id, $0) })
         store.trackedBoards = store.trackedBoards.map { boardByID[$0.id] ?? $0 }
@@ -68,13 +78,19 @@ enum DiscoveryCoordinator {
 
         let count = outcome.newJobs.count
         if count == 0, let firstError = outcome.errors.first {
-            monitor.fail(outcome.errors.count == 1 ? firstError : "\(outcome.errors.count) boards failed. \(firstError)")
+            monitor.fail(outcome.errors.count == 1 ? firstError : "\(outcome.errors.count) boards failed. \(firstError)",
+                         key: key)
         } else {
             var message = count == 0 ? "No new postings found." : "Found \(count) new posting\(count == 1 ? "" : "s")."
             if !closedIDs.isEmpty {
                 message += " \(closedIDs.count) no longer listed."
             }
-            monitor.succeed(message)
+            // With many boards a few failures are normal; say so rather than
+            // reporting a clean run.
+            if !outcome.errors.isEmpty {
+                message += " \(outcome.errors.count) board\(outcome.errors.count == 1 ? "" : "s") couldn't be checked."
+            }
+            monitor.succeed(message, key: key)
         }
     }
 }
@@ -154,11 +170,10 @@ struct DiscoveryWorkspaceView: View {
             }
         }
         .sheet(isPresented: $showAddBoard) {
-            AddBoardSheet(existing: nil,
-                          trackedProviderIDs: Set(store.trackedBoards.map(\.kindRaw))) { addBoard($0) }
+            AddBoardSheet(existing: nil, trackedBoards: store.trackedBoards) { addBoards($0) }
         }
         .sheet(item: $editingBoard) { board in
-            AddBoardSheet(existing: board) { updateBoard($0) }
+            AddBoardSheet(existing: board) { boards in boards.first.map(updateBoard) }
         }
         .sheet(item: $importingJob) { job in
             JobURLImportSheet(
@@ -185,7 +200,7 @@ struct DiscoveryWorkspaceView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             if store.trackedBoards.isEmpty {
-                Text("Track a Greenhouse, Lever, Ashby, or Workday board to discover new roles automatically.")
+                Text("Track a board by URL, pick a large employer, or paste a whole watchlist — then new roles are discovered automatically.")
                     .font(.callout).foregroundStyle(.secondary)
                     .padding(.vertical, 4)
             } else {
@@ -479,9 +494,17 @@ struct DiscoveryWorkspaceView: View {
     }
 
     private func addBoard(_ board: TrackedBoard) {
-        store.trackedBoards.append(board)
+        addBoards([board])
+    }
+
+    /// Adds a batch and polls it as one run. The watchlist sheet can add dozens
+    /// at a time, and a poll per board would put dozens of crawls in flight at
+    /// once; `refresh(only:)` walks them in sequence instead.
+    private func addBoards(_ boards: [TrackedBoard]) {
+        guard !boards.isEmpty else { return }
+        store.trackedBoards.append(contentsOf: boards)
         persistBoards()
-        refresh(only: [board])
+        refresh(only: boards)
     }
 
     private func updateBoard(_ board: TrackedBoard) {

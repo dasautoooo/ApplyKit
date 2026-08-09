@@ -591,6 +591,30 @@ final class JobDiscoveryTests: XCTestCase {
         XCTAssertTrue(again.isEmpty)
     }
 
+    /// Boards are fetched concurrently but folded together in board order, so a
+    /// posting two boards both list is always credited to the earlier board —
+    /// whichever one the network happened to answer first.
+    func testConcurrentRefreshStillDedupesInBoardOrder() async throws {
+        let shared = "https://boards.greenhouse.io/shared/jobs/1"
+        let first = TrackedBoard(kindRaw: "greenhouse", slug: "first", companyName: "First Co")
+        let second = TrackedBoard(kindRaw: "greenhouse", slug: "second", companyName: "Second Co")
+        let postings = [DiscoveredPosting(externalID: "1", title: "Engineer", location: "Remote", url: shared)]
+
+        var seen = Set<String>()
+        let a = JobDiscoveryService.filterAndDedupe(postings: postings, board: first, seenKeys: &seen)
+        let b = JobDiscoveryService.filterAndDedupe(postings: postings, board: second, seenKeys: &seen)
+        XCTAssertEqual(a.count, 1)
+        XCTAssertEqual(a.first?.companyName, "First Co")
+        XCTAssertTrue(b.isEmpty, "The second board's copy is a duplicate, whatever order it arrived in")
+
+        // An empty board list is a no-op rather than a hang or a crash.
+        let outcome = await JobDiscoveryService().refresh(boards: [], existingApplicationKeys: [],
+                                                          existingDiscovered: [])
+        XCTAssertTrue(outcome.newJobs.isEmpty)
+        XCTAssertTrue(outcome.errors.isEmpty)
+        XCTAssertTrue(outcome.boards.isEmpty)
+    }
+
     func testFilterDropsCatchAllTalentPoolPostings() {
         XCTAssertTrue(JobDiscoveryService.isCatchAllPosting(title: "Don't see what you're looking for?"))
         XCTAssertTrue(JobDiscoveryService.isCatchAllPosting(title: "Interested in an internship?"))
@@ -672,5 +696,466 @@ final class JobDiscoveryTests: XCTestCase {
         XCTAssertEqual(restored.site, "Careers")
         XCTAssertEqual(restored.titleKeywords, ["engineer"])
         XCTAssertEqual(restored.excludeKeywords, ["intern"])
+    }
+
+    // MARK: - Eightfold AI
+
+    func testEightfoldBoardDetection() throws {
+        let board = try XCTUnwrap(JobBoardProviders.detect(url: XCTUnwrap(URL(string: "https://microsoft.eightfold.ai/careers"))))
+        XCTAssertEqual(board.kindRaw, "eightfold")
+        XCTAssertEqual(board.slug, "microsoft")
+        // Custom-domain tenants (Microsoft's real apply host) aren't detectable from
+        // the URL alone — only added as a `BuiltInCompany` entry that sets `host`.
+        XCTAssertNil(JobBoardProviders.detect(url: try XCTUnwrap(URL(string: "https://apply.careers.microsoft.com/careers"))))
+    }
+
+    func testEightfoldListMapping() throws {
+        let payload: [String: Any] = ["positions": [
+            ["id": 12345, "name": "Senior Software Engineer",
+             "canonicalPositionUrl": "/careers/job/12345",
+             "standardizedLocations": ["United States, Washington, Redmond"],
+             "postedTs": 1_700_000_000]
+        ], "count": 1]
+        let postings = EightfoldProvider.parse(payload, base: "https://microsoft.eightfold.ai")
+        XCTAssertEqual(postings.count, 1)
+        let posting = try XCTUnwrap(postings.first)
+        XCTAssertEqual(posting.externalID, "12345")
+        XCTAssertEqual(posting.title, "Senior Software Engineer")
+        XCTAssertEqual(posting.location, "United States, Washington, Redmond")
+        XCTAssertEqual(posting.url, "https://microsoft.eightfold.ai/careers/job/12345")
+        XCTAssertNotNil(posting.postedAt)
+    }
+
+    // MARK: - SAP SuccessFactors
+
+    func testSuccessFactorsNeverAutoDetects() throws {
+        XCTAssertNil(JobBoardProviders.detect(url: try XCTUnwrap(URL(string: "https://jobs.sap.com/sitemal.xml"))))
+    }
+
+    func testSuccessFactorsRSSMapping() throws {
+        let xml = """
+        <?xml version="1.0"?>
+        <rss version="2.0" xmlns:g="http://base.google.com/ns/1.0"><channel>
+        <title>SAP Careers</title>
+        <item>
+          <title>Senior Developer (Toronto, Ontario, Canada)</title>
+          <link>https://jobs.sap.com/job/Toronto-Senior-Developer/12345</link>
+          <g:id>12345</g:id>
+          <pubDate>Mon, 05 Jan 2026 08:00:00 GMT</pubDate>
+        </item>
+        </channel></rss>
+        """
+        let postings = SuccessFactorsProvider.parse(rss: xml)
+        XCTAssertEqual(postings.count, 1)
+        let posting = try XCTUnwrap(postings.first)
+        XCTAssertEqual(posting.externalID, "12345")
+        XCTAssertEqual(posting.title, "Senior Developer")
+        XCTAssertEqual(posting.location, "Toronto, Ontario, Canada")
+        XCTAssertNotNil(posting.postedAt)
+    }
+
+    // MARK: - Avature
+
+    func testAvatureBoardDetection() throws {
+        let board = try XCTUnwrap(JobBoardProviders.detect(url: XCTUnwrap(URL(string: "https://bloomberg.avature.net/careers/SearchJobs/"))))
+        XCTAssertEqual(board.kindRaw, "avature")
+        XCTAssertEqual(board.slug, "bloomberg")
+    }
+
+    func testAvatureListMapping() throws {
+        let json = """
+        [
+          {"href": "https://bloomberg.avature.net/careers/JobDetail/Software-Engineer/12345",
+           "title": "Software Engineer", "location": "New York"},
+          {"href": "https://bloomberg.avature.net/careers/JobDetail/Software-Engineer/12345",
+           "title": "Software Engineer", "location": "New York"},
+          {"href": "https://bloomberg.avature.net/careers/JobDetail/Apply/99", "title": "Apply Now", "location": ""}
+        ]
+        """
+        let postings = AvatureProvider.parse(json: json, base: "https://bloomberg.avature.net")
+        XCTAssertEqual(postings.count, 1, "Duplicate anchors dedupe by id, and pseudo-title anchors are dropped")
+        let posting = try XCTUnwrap(postings.first)
+        XCTAssertEqual(posting.externalID, "12345")
+        XCTAssertEqual(posting.title, "Software Engineer")
+        XCTAssertEqual(posting.location, "New York")
+    }
+
+    // MARK: - iCIMS
+
+    func testICIMSBoardDetection() throws {
+        let board = try XCTUnwrap(JobBoardProviders.detect(url: XCTUnwrap(URL(string: "https://careers-peraton.icims.com/jobs/search"))))
+        XCTAssertEqual(board.kindRaw, "icims")
+        XCTAssertEqual(board.slug, "peraton")
+
+        let usBoard = try XCTUnwrap(JobBoardProviders.detect(url: XCTUnwrap(URL(string: "https://uscareers-rws.icims.com/jobs/search"))))
+        XCTAssertEqual(usBoard.slug, "rws")
+    }
+
+    func testICIMSCardParsing() throws {
+        let html = """
+        <li class="iCIMS_JobCardItem">
+          <div class="col-xs-6 header left">
+            <span class="sr-only field-label">Job Locations</span>
+            <span> US-CA-Monrovia</span>
+          </div>
+          <div class="col-xs-6 header right">
+            <span title="5/6/2026 10:23 AM">3 hours ago</span>
+          </div>
+          <div class="col-xs-12 title">
+            <a href="https://careers-peraton.icims.com/jobs/12345/engineer/job" class="iCIMS_Anchor">
+              <h3>Software Engineer</h3>
+            </a>
+          </div>
+        </li>
+        """
+        let postings = ICIMSProvider.parse(html: html)
+        XCTAssertEqual(postings.count, 1)
+        let posting = try XCTUnwrap(postings.first)
+        XCTAssertEqual(posting.externalID, "12345")
+        XCTAssertEqual(posting.title, "Software Engineer")
+        XCTAssertEqual(posting.location, "US-CA-Monrovia")
+        XCTAssertNotNil(posting.postedAt)
+    }
+
+    // MARK: - Cornerstone OnDemand
+
+    func testCornerstoneBoardDetection() throws {
+        let board = try XCTUnwrap(JobBoardProviders.detect(url: XCTUnwrap(URL(string: "https://henkel.csod.com/ux/ats/careersite/1/home?c=henkel"))))
+        XCTAssertEqual(board.kindRaw, "cornerstone")
+        XCTAssertEqual(board.slug, "henkel")
+        XCTAssertEqual(board.site, "1")
+    }
+
+    func testCornerstoneRequisitionMapping() throws {
+        let requisitions: [[String: Any]] = [
+            ["requisitionId": "REQ123", "displayJobTitle": "Data Engineer",
+             "locations": [["city": "Toronto", "state": "ON", "country": "Canada"]],
+             "postingEffectiveDate": "2026-01-05T00:00:00Z"]
+        ]
+        let postings = CornerstoneProvider.parse(requisitions, slug: "henkel", origin: "https://henkel.csod.com", siteID: "1")
+        XCTAssertEqual(postings.count, 1)
+        let posting = try XCTUnwrap(postings.first)
+        XCTAssertEqual(posting.externalID, "REQ123")
+        XCTAssertEqual(posting.title, "Data Engineer")
+        XCTAssertEqual(posting.location, "Toronto, ON, Canada")
+        XCTAssertEqual(posting.url, "https://henkel.csod.com/ux/ats/careersite/1/job/REQ123?c=henkel")
+    }
+
+    // MARK: - Phenom
+
+    func testPhenomDetectsTenantsOnTheirOwnDomains() throws {
+        func board(_ string: String) throws -> TrackedBoard {
+            try XCTUnwrap(JobBoardProviders.detect(url: XCTUnwrap(URL(string: string))))
+        }
+        // The apply URL a candidate would actually copy out of the browser.
+        let apply = try board("https://careers.cisco.com/global/en/apply?jobSeqNo=CISCISGLOBAL2019955EXTERNALENGLOBAL&step=1&stepname=personalInformation")
+        XCTAssertEqual(apply.kindRaw, "phenom")
+        XCTAssertEqual(apply.slug, "careers.cisco.com")
+        XCTAssertEqual(apply.site, "global/en", "Country and language come from the path, not a guess")
+        XCTAssertEqual(apply.companyName, "Cisco")
+
+        let search = try board("https://careers.cisco.com/global/en/search-results")
+        XCTAssertEqual(search.site, "global/en")
+        let bell = try board("https://jobs.bell.ca/ca/en/job/12345/Engineer")
+        XCTAssertEqual(bell.site, "ca/en")
+        XCTAssertEqual(bell.companyName, "Bell")
+    }
+
+    /// Phenom matches on URL *shape* rather than host, so it is registered last
+    /// and must not claim a URL that belongs to a host-specific provider.
+    func testPhenomDoesNotHijackOtherProvidersURLs() throws {
+        func kind(_ string: String) throws -> String? {
+            JobBoardProviders.detect(url: try XCTUnwrap(URL(string: string)))?.kindRaw
+        }
+        XCTAssertEqual(try kind("https://acme.wd5.myworkdayjobs.com/en-US/Careers"), "workday")
+        XCTAssertEqual(try kind("https://acme.wd5.myworkdayjobs.com/en-US/Careers/job/Toronto/Engineer_R123"), "workday")
+        XCTAssertEqual(try kind("https://boards.greenhouse.io/acme/jobs/123"), "greenhouse")
+        XCTAssertEqual(try kind("https://jobs.lever.co/acme/abc-123"), "lever")
+        XCTAssertEqual(try kind("https://jobs.ashbyhq.com/acme/some-id"), "ashby")
+        // And a plain careers page still matches nothing at all.
+        XCTAssertNil(try kind("https://example.com/careers"))
+        XCTAssertNil(try kind("https://example.com/about/team"))
+    }
+
+    func testPhenomListMapping() throws {
+        // Shaped as careers.cisco.com actually returns it.
+        let payload: [String: Any] = ["refineSearch": ["totalHits": 1067, "data": ["jobs": [
+            ["jobId": "2019955", "jobSeqNo": "CISCISGLOBAL2019955EXTERNALENGLOBAL",
+             "title": "Solutions Designer", "city": "Toronto", "state": "Ontario", "country": "Canada",
+             "location": "Toronto, Ontario, Canada",
+             "applyUrl": "https://cisco.wd5.myworkdayjobs.com/Cisco_Careers/job/Toronto/Solutions-Designer",
+             "postedDate": "2026-07-28T00:00:00.000+0000"]
+        ]]]]
+        XCTAssertEqual(PhenomProvider.total(in: payload), 1067)
+        let postings = PhenomProvider.parse(payload, base: "https://careers.cisco.com", country: "global", lang: "en")
+        XCTAssertEqual(postings.count, 1)
+        let posting = try XCTUnwrap(postings.first)
+        XCTAssertEqual(posting.externalID, "2019955")
+        XCTAssertEqual(posting.title, "Solutions Designer")
+        XCTAssertEqual(posting.location, "Toronto, Ontario, Canada")
+        // The careers site the posting is read on — not `applyUrl`, which points
+        // at the Workday tenant behind Cisco's Phenom front end.
+        XCTAssertEqual(posting.url,
+                       "https://careers.cisco.com/global/en/job/CISCISGLOBAL2019955EXTERNALENGLOBAL/Solutions-Designer")
+        XCTAssertNotNil(posting.postedAt, "Phenom's millisecond+offset timestamps parse")
+    }
+
+    /// "Browse Companies" marks a row tracked by comparing `BuiltInCompany` to
+    /// the stored boards. Those two identities must agree — when the catalog key
+    /// gained a slug suffix and the board key didn't, every already-tracked
+    /// employer showed a "Track…" button as though it were new.
+    func testBrowseCompaniesRecognizesBoardsThatAreAlreadyTracked() throws {
+        let amazon = try XCTUnwrap(BuiltInCompanies.all.first { $0.providerID == AmazonProvider.id })
+        let tracked = [amazon.makeBoard()]
+        let keys = Set(tracked.map(\.trackingKey))
+
+        XCTAssertTrue(keys.contains(amazon.trackingKey), "A board made from a catalog entry must match that entry")
+
+        // A second tenant of the same multi-tenant provider is still untracked —
+        // the key can't collapse to the provider alone.
+        let microsoft = try XCTUnwrap(BuiltInCompanies.all.first { $0.providerID == EightfoldProvider.id })
+        XCTAssertFalse(keys.contains(microsoft.trackingKey))
+        let cisco = BuiltInCompany(providerID: EightfoldProvider.id, slug: "cisco", name: "Cisco",
+                                   careersURL: "https://cisco.eightfold.ai", note: "")
+        XCTAssertNotEqual(microsoft.trackingKey, cisco.trackingKey)
+    }
+
+    // MARK: - Watchlist checker
+
+    // MARK: - Finding a board from a company name
+
+    func testSlugCandidatesCoverTheSpellingsBoardsActuallyUse() {
+        // Verified live: these are the real slugs on Greenhouse/Lever/Ashby.
+        XCTAssertEqual(BoardSlugProber.candidateSlugs(for: "Wealthsimple").first, "wealthsimple")
+        XCTAssertEqual(BoardSlugProber.candidateSlugs(for: "1Password").first, "1password")
+        XCTAssertTrue(BoardSlugProber.candidateSlugs(for: "Magnet Forensics").contains("magnetforensics"))
+        XCTAssertTrue(BoardSlugProber.candidateSlugs(for: "Magnet Forensics").contains("magnet-forensics"))
+
+        // Punctuation, accents, and legal suffixes are noise in a slug.
+        XCTAssertEqual(BoardSlugProber.candidateSlugs(for: "Super.com").first, "supercom")
+        XCTAssertEqual(BoardSlugProber.candidateSlugs(for: "Faire, Inc.").first, "faire")
+        XCTAssertEqual(BoardSlugProber.candidateSlugs(for: "Chargé").first, "charge")
+        // "theScore / PENN Entertainment" — the first alternative is the employer.
+        XCTAssertEqual(BoardSlugProber.candidateSlugs(for: "theScore / PENN Entertainment").first, "thescore")
+
+        XCTAssertTrue(BoardSlugProber.candidateSlugs(for: "  ").isEmpty)
+        XCTAssertTrue(BoardSlugProber.candidateSlugs(for: "!!!").isEmpty)
+    }
+
+    /// A slug must never be truncated to a first word: "Magnet" is a different
+    /// company from "Magnet Forensics", and a probe that hit its board would
+    /// hand back the wrong employer with nothing to show the mistake.
+    func testSlugCandidatesNeverTruncateToAFirstWord() {
+        let slugs = BoardSlugProber.candidateSlugs(for: "Magnet Forensics")
+        XCTAssertFalse(slugs.contains("magnet"))
+        XCTAssertFalse(BoardSlugProber.candidateSlugs(for: "Recursion Pharmaceuticals").contains("recursion"))
+    }
+
+    func testProbedBoardsAreBucketedAndLabelled() throws {
+        let rows = WatchlistChecker.check("Wealthsimple\nAcme, https://boards.greenhouse.io/acme", trackedBoards: [])
+        let nameOnly = WatchlistChecker.probeTargets(in: rows)
+        XCTAssertEqual(nameOnly.count, 1, "Only the row without a URL is worth probing")
+        XCTAssertEqual(nameOnly.first?.name, "Wealthsimple")
+
+        let found = TrackedBoard(kindRaw: "ashby", slug: "wealthsimple")
+        let resolved = WatchlistChecker.resolving(try XCTUnwrap(nameOnly.first), with: found, trackedKeys: [])
+        XCTAssertEqual(resolved.bucket, .ready)
+        XCTAssertEqual(resolved.source, .probe, "The row records that the board was inferred from a name")
+        XCTAssertEqual(resolved.board?.companyName, "Wealthsimple", "The typed name wins over the slug")
+
+        // Already tracked stays tracked rather than offering a duplicate add.
+        let already = WatchlistChecker.resolving(try XCTUnwrap(nameOnly.first), with: found,
+                                                 trackedKeys: [found.trackingKey])
+        XCTAssertEqual(already.bucket, .tracked)
+
+        // A miss leaves the row exactly as it was.
+        let missed = WatchlistChecker.resolving(try XCTUnwrap(nameOnly.first), with: nil, trackedKeys: [])
+        XCTAssertEqual(missed.bucket, .unmatched)
+        XCTAssertNotEqual(missed.source, .probe)
+    }
+
+    /// A bare name has to be checked against what's already tracked. Amazon and
+    /// Apple are single-company providers with no URL to detect and no slug to
+    /// probe, so without this they read as untracked however many times you had
+    /// already added them.
+    func testBareNamesRecognizeBoardsAlreadyTracked() throws {
+        let amazon = try XCTUnwrap(BuiltInCompanies.company(named: "Amazon")).makeBoard()
+        var wealthsimple = TrackedBoard(kindRaw: "ashby", slug: "wealthsimple")
+        wealthsimple.companyName = "Wealthsimple"
+
+        let rows = WatchlistChecker.check("Amazon\nWealthsimple\nCohere", trackedBoards: [amazon, wealthsimple])
+        XCTAssertEqual(rows[0].bucket, .tracked, "Matched by the name the board is filed under")
+        XCTAssertEqual(rows[1].bucket, .tracked)
+        XCTAssertEqual(rows[2].bucket, .unmatched, "Untracked and not in the catalog — left for the probe")
+        XCTAssertTrue(WatchlistChecker.probeTargets(in: rows).map(\.name) == ["Cohere"],
+                      "Rows already resolved are not probed again")
+    }
+
+    /// The catalog knows each entry's provider, slug and host exactly, so a name
+    /// it covers needs no network round trip and no inference.
+    func testBareNamesResolveFromTheBuiltInCatalog() {
+        let rows = WatchlistChecker.check("Microsoft\nSAP\nCisco\nNot A Real Company", trackedBoards: [])
+        XCTAssertEqual(rows[0].bucket, .ready)
+        XCTAssertEqual(rows[0].board?.kindRaw, "eightfold")
+        XCTAssertEqual(rows[0].source, .catalog)
+        XCTAssertEqual(rows[1].board?.kindRaw, "successfactors")
+        XCTAssertEqual(rows[2].board?.kindRaw, "phenom")
+        XCTAssertEqual(rows[3].bucket, .unmatched)
+    }
+
+    func testCatalogNameLookupIgnoresCaseAndPunctuation() throws {
+        XCTAssertEqual(BuiltInCompanies.company(named: "microsoft")?.name, "Microsoft")
+        XCTAssertEqual(BuiltInCompanies.company(named: "  TikTok  ")?.name, "TikTok")
+        XCTAssertNil(BuiltInCompanies.company(named: ""))
+        XCTAssertNil(BuiltInCompanies.company(named: "Micro soft Corp"))
+    }
+
+    /// Workday is detected from any URL that names a career site — with or
+    /// without a locale prefix, from the list or from a job.
+    func testWorkdayDetectionCoversTheShapesTenantsActuallyServe() throws {
+        func board(_ string: String) throws -> TrackedBoard? {
+            JobBoardProviders.detect(url: try XCTUnwrap(URL(string: string)))
+        }
+        for string in ["https://acme.wd5.myworkdayjobs.com/en-US/Careers",
+                       "https://acme.wd5.myworkdayjobs.com/Careers",
+                       "https://acme.wd5.myworkdayjobs.com/fr-CA/Careers",
+                       "https://acme.wd1.myworkdayjobs.com/en-US/Careers/details/Job-Title_R-123",
+                       "https://acme.wd5.myworkdayjobs.com/en-US/Careers/job/Toronto/Engineer_R123"] {
+            let detected = try board(string)
+            XCTAssertEqual(detected?.kindRaw, "workday", string)
+            XCTAssertEqual(detected?.slug, "acme", string)
+            XCTAssertEqual(detected?.site, "Careers", string)
+        }
+
+        // The tenant root names no career site, and there is nothing to poll
+        // without one — it answers 406 with no redirect to follow.
+        XCTAssertNil(try board("https://acme.wd5.myworkdayjobs.com/"))
+        XCTAssertNotNil(BoardDetectionHint.hint(for: try XCTUnwrap(URL(string: "https://acme.wd5.myworkdayjobs.com/"))),
+                        "…so say which URL to paste instead of listing supported platforms")
+        XCTAssertNil(BoardDetectionHint.hint(for: try XCTUnwrap(URL(string: "https://acme.wd5.myworkdayjobs.com/Careers"))),
+                     "A URL that does resolve needs no hint")
+    }
+
+    func testMirrorDomainsExplainThemselves() throws {
+        let mirror = try XCTUnwrap(URL(string: "https://www.dropbox.jobs/en/jobs/8074704/engineer/"))
+        XCTAssertNil(JobBoardProviders.detect(url: mirror))
+        XCTAssertEqual(BoardDetectionHint.hint(for: mirror)?.contains("mirror"), true)
+    }
+
+    /// An unresolved company can be fixed in place by pasting its URL against
+    /// that one row, rather than re-pasting the whole list.
+    func testAURLTypedAgainstOneRowResolvesIt() throws {
+        let rows = WatchlistChecker.check("Some Startup", trackedBoards: [])
+        let row = try XCTUnwrap(rows.first)
+        XCTAssertEqual(row.bucket, .unmatched)
+
+        let resolved = try XCTUnwrap(WatchlistChecker
+            .resolving(row, url: "https://boards.greenhouse.io/somestartup", trackedKeys: []).row)
+        XCTAssertEqual(resolved.bucket, .ready)
+        XCTAssertEqual(resolved.board?.kindRaw, "greenhouse")
+        XCTAssertEqual(resolved.board?.slug, "somestartup")
+        XCTAssertEqual(resolved.board?.companyName, "Some Startup", "The typed name wins over the slug")
+        XCTAssertEqual(resolved.source, .url)
+
+        // A board already tracked lands in `tracked`, not offered as a duplicate.
+        let key = TrackedBoard.trackingKey(kindRaw: "greenhouse", slug: "somestartup")
+        XCTAssertEqual(WatchlistChecker.resolving(row, url: "https://boards.greenhouse.io/somestartup",
+                                                  trackedKeys: [key]).row?.bucket, .tracked)
+
+        // The two ways it can fail are reported apart, because the fix differs.
+        XCTAssertEqual(WatchlistChecker.resolving(row, url: "not a url", trackedKeys: []), .invalid)
+        XCTAssertEqual(WatchlistChecker.resolving(row, url: "https://example.com/careers", trackedKeys: []),
+                       .unrecognized)
+    }
+
+    /// The bundled directory is the only route from a company *name* to a
+    /// host-keyed platform: no slug guess produces `clio.wd3.myworkdayjobs.com`
+    /// plus the site id, so probing can never find it.
+    func testTheTenantDirectoryResolvesHostKeyedPlatformsByName() throws {
+        XCTAssertGreaterThan(KnownBoardDirectory.count, 5000, "The bundled directory must actually load")
+
+        let clio = try XCTUnwrap(KnownBoardDirectory.board(named: "Clio"))
+        XCTAssertEqual(clio.kindRaw, "workday")
+        XCTAssertEqual(clio.slug, "clio")
+        XCTAssertEqual(clio.host, "clio.wd3.myworkdayjobs.com")
+        XCTAssertEqual(clio.site, "cliocareersite")
+        XCTAssertEqual(KnownBoardDirectory.board(named: "  clio ")?.slug, "clio", "Lookup ignores case and spacing")
+
+        // Every row must name a provider that still exists, or it can't be polled.
+        for name in ["Clio", "Autodesk", "Motorola Solutions", "Electronic Arts", "Microsoft"] {
+            let board = try XCTUnwrap(KnownBoardDirectory.board(named: name), name)
+            XCTAssertNotNil(JobBoardProviders.provider(id: board.kindRaw), "\(name) → \(board.kindRaw)")
+        }
+
+        XCTAssertNil(KnownBoardDirectory.board(named: "Definitely Not A Real Company Ltd"))
+        XCTAssertNil(KnownBoardDirectory.board(named: ""))
+
+        // Entries verified by hand override the generated rows, so a later row
+        // with the same name has to win.
+        let ebay = try XCTUnwrap(KnownBoardDirectory.board(named: "eBay"))
+        XCTAssertEqual(ebay.host, "ebay.wd5.myworkdayjobs.com")
+        XCTAssertEqual(ebay.site, "apply")
+        XCTAssertEqual(KnownBoardDirectory.board(named: "Bell")?.kindRaw, "phenom")
+        XCTAssertEqual(KnownBoardDirectory.board(named: "Yelp")?.host, "uscareers-yelp.icims.com")
+    }
+
+    func testDirectoryMatchesFlowThroughTheWatchlistCheck() throws {
+        let rows = WatchlistChecker.check("Clio", trackedBoards: [])
+        let row = try XCTUnwrap(rows.first)
+        XCTAssertEqual(row.bucket, .ready, "Was unmatched before the directory existed")
+        XCTAssertEqual(row.source, .directory)
+        XCTAssertEqual(row.board?.kindRaw, "workday")
+        XCTAssertEqual(row.board?.companyName, "Clio")
+
+        // And a directory hit that's already tracked isn't offered again.
+        let tracked = try XCTUnwrap(KnownBoardDirectory.board(named: "Clio"))
+        XCTAssertEqual(WatchlistChecker.check("Clio", trackedBoards: [tracked]).first?.bucket, .tracked)
+    }
+
+    /// Host-keyed platforms are excluded on purpose — a company name implies no
+    /// tenant host, so probing them would be guesswork.
+    func testOnlySlugAddressableProvidersAreProbed() {
+        let probed = Set(BoardSlugProber.providers.map { $0.id })
+        XCTAssertEqual(probed, ["greenhouse", "lever", "ashby", "smartrecruiters"])
+        for hostKeyed in ["workday", "phenom", "icims", "cornerstone", "avature", "eightfold", "successfactors"] {
+            XCTAssertFalse(probed.contains(hostKeyed), "\(hostKeyed) needs a tenant host a name can't supply")
+        }
+    }
+
+    /// Batch-adding a watchlist without filters would bury the inbox — one
+    /// global employer can list a thousand roles — so the sheet's filter form
+    /// has to reach every board it adds.
+    func testBatchFiltersAreAppliedToEachBoard() throws {
+        var board = TrackedBoard(kindRaw: "greenhouse", slug: "acme", companyName: "Acme")
+        board.applyFilters(titleKeywords: "engineer, developer",
+                           excludeKeywords: " senior ,staff",
+                           locationKeywords: "toronto")
+        XCTAssertEqual(board.titleKeywords, ["engineer", "developer"])
+        XCTAssertEqual(board.excludeKeywords, ["senior", "staff"], "Whitespace around a keyword is trimmed")
+        XCTAssertEqual(board.locationKeywords, ["toronto"])
+
+        // Empty means "no filter", not a filter that matches nothing.
+        board.applyFilters(titleKeywords: "", excludeKeywords: "", locationKeywords: "")
+        XCTAssertTrue(board.titleKeywords.isEmpty)
+        let posting = DiscoveredPosting(externalID: "1", title: "Anything At All",
+                                        location: "Nowhere", url: "https://example.com/1")
+        XCTAssertTrue(JobDiscoveryService.passesFilters(posting, board: board))
+    }
+
+    func testWatchlistCheckerBucketsByDetectionAndTrackedState() {
+        let tracked = [TrackedBoard(kindRaw: "greenhouse", slug: "acme", companyName: "Acme")]
+        let input = """
+        Acme, https://boards.greenhouse.io/acme
+        NewCo, https://jobs.lever.co/newco
+        Mystery Corp
+        Nowhere Inc, https://example.com/careers
+        """
+        let rows = WatchlistChecker.check(input, trackedBoards: tracked)
+        XCTAssertEqual(rows.count, 4)
+        XCTAssertEqual(rows[0].bucket, .tracked)
+        XCTAssertEqual(rows[1].bucket, .ready)
+        XCTAssertEqual(rows[1].board?.companyName, "NewCo")
+        XCTAssertEqual(rows[2].bucket, .unmatched, "No URL given")
+        XCTAssertEqual(rows[3].bucket, .unmatched, "URL given but no provider matched")
     }
 }

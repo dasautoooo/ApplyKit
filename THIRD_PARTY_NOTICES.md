@@ -18,6 +18,31 @@ Specifically, the following are ports or adaptations of that project's work:
   JazzHR, and Teamtailor.
 - Career-site endpoints and field mappings for Amazon, Apple, Uber, TikTok,
   ByteDance, Google, Tesla, and Meta.
+- The Eightfold AI search-endpoint and pagination logic in
+  `ApplyKit/Infrastructure/Discovery/Providers/EightfoldProvider.swift`, ported
+  from `src/ats_scrapers/scrapers/eightfold.py`.
+- The SuccessFactors recruiting-marketing RSS feed parsing in
+  `ApplyKit/Infrastructure/Discovery/Providers/SuccessFactorsProvider.swift`,
+  ported from `src/ats_scrapers/scrapers/successfactors.py`.
+- The iCIMS job-card HTML pattern and pagination in
+  `ApplyKit/Infrastructure/Discovery/Providers/ICIMSProvider.swift`, ported
+  from `src/ats_scrapers/scrapers/icims.py`.
+- The Cornerstone OnDemand JWT-then-JSON session flow in
+  `ApplyKit/Infrastructure/Discovery/Providers/CornerstoneProvider.swift`,
+  ported from `src/ats_scrapers/scrapers/cornerstone.py`.
+- `ApplyKit/Resources/known-boards.tsv` — the bundled company-name → tenant
+  directory — is generated from that project's `ats-companies/*.csv` dataset
+  (Workday, iCIMS, Cornerstone, SuccessFactors, Avature, Eightfold, Phenom),
+  reshaped into ApplyKit's `TrackedBoard` fields. Names that mapped to more
+  than one company were dropped.
+- The Phenom `refineSearch` widget payload, CSRF handshake, and pagination in
+  `ApplyKit/Infrastructure/Discovery/Providers/PhenomProvider.swift`, ported
+  from `src/ats_scrapers/scrapers/phenom.py`.
+- The Avature job-anchor/container extraction strategy in
+  `ApplyKit/Infrastructure/Discovery/Providers/AvatureProvider.swift`,
+  adapted from `src/ats_scrapers/scrapers/avature.py` (reimplemented as an
+  in-page JS query run through `BrowserFetcher` rather than the Python
+  version's BeautifulSoup + httpcloak/Browserbase fallback chain).
 
 MIT License
 
