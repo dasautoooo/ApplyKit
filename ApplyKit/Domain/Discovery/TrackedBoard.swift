@@ -62,4 +62,18 @@ struct TrackedBoard: Identifiable, Codable, Hashable {
     static func trackingKey(kindRaw: String, slug: String) -> String {
         "\(kindRaw):\(slug.lowercased())"
     }
+
+    /// Boards matching a free-text query, for finding one company among a
+    /// hundred. Matches the company name, the tenant slug, and the platform —
+    /// so "workday" narrows to a platform as readily as "clio" to a company.
+    /// An empty query matches everything.
+    static func matching(_ query: String, in boards: [TrackedBoard]) -> [TrackedBoard] {
+        let needle = query.trimmed.lowercased()
+        guard !needle.isEmpty else { return boards }
+        return boards.filter {
+            $0.displayName.lowercased().contains(needle)
+                || $0.slug.lowercased().contains(needle)
+                || $0.providerName.lowercased().contains(needle)
+        }
+    }
 }

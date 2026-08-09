@@ -168,16 +168,20 @@ extension ApplicationEditorView {
                 }
 
                 ForEach(group.changes) { change in
-                    TailoringChangeRow(change: change) {
-                        applyTailoringChange(change)
-                    } onApplyAlternate: {
-                    // A new bullet is applied one of two ways; the row's second
-                    // button keeps it out of the shared bank.
-                        guard case .newBullet(let bullet, _) = change.action else { return }
-                        var scoped = change
-                        scoped.action = .newBullet(bullet, toBank: false)
-                        applyTailoringChange(scoped)
-                    }
+                    TailoringChangeRow(
+                        change: change,
+                        canRevert: canRevertTailoringChange(change),
+                        onApply: { applyTailoringChange(change) },
+                        onApplyAlternate: {
+                            // A new bullet is applied one of two ways; the row's
+                            // second button keeps it out of the shared bank.
+                            guard case .newBullet(let bullet, _) = change.action else { return }
+                            var scoped = change
+                            scoped.action = .newBullet(bullet, toBank: false)
+                            applyTailoringChange(scoped)
+                        },
+                        onRevert: { revertTailoringChange(change) }
+                    )
                 }
             }
         }
@@ -246,8 +250,10 @@ extension ApplicationEditorView {
 
 private struct TailoringChangeRow: View {
     let change: TailoringChange
+    var canRevert = false
     let onApply: () -> Void
     var onApplyAlternate: (() -> Void)? = nil
+    var onRevert: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -314,9 +320,16 @@ private struct TailoringChangeRow: View {
         if change.isBlocked || change.isInformational {
             EmptyView()
         } else if change.applied {
-            Label("Applied", systemImage: "checkmark.circle.fill")
-                .font(.callout.weight(.medium))
-                .foregroundStyle(.green)
+            HStack(spacing: 8) {
+                Label("Applied", systemImage: "checkmark.circle.fill")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.green)
+                if canRevert, let onRevert {
+                    Button("Revert", action: onRevert)
+                        .controlSize(.small)
+                        .help("Put back what this change replaced")
+                }
+            }
         } else if change.newBullet != nil, let onApplyAlternate {
             HStack(spacing: 6) {
                 Button("Add to Bank", action: onApply)

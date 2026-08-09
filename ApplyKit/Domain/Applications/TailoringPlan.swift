@@ -363,6 +363,55 @@ enum LossyDecode {
 /// like curated suggestions). Survives sheet close / relaunch so multi-round
 /// suggestions keep their applied progress. This is workflow state, not resume
 /// content — it is deliberately excluded from `copyResumeContent`.
+/// Everything a single applied change touched, captured just before it was
+/// applied so it can be put back.
+///
+/// A snapshot rather than an inverse operation: the tailoring actions aren't
+/// individually invertible (a selection change rewrites the whole order, a
+/// rewrite mints a variant and repoints the selection), and every field it
+/// covers is already a plain string on `JobApplication`, so copying them is
+/// both exact and cheap.
+struct TailoringRevertPoint: Codable, Equatable {
+    var summaryText = ""
+    var skillsBlockText = ""
+    var sectionOrderText = ""
+    var selectedExperienceIDsText = ""
+    var selectedProjectIDsText = ""
+    var selectedVariantIDsText = ""
+    var experienceOrderText = ""
+    var employmentRoleDescriptionsText = ""
+    var hiddenRoleDescriptionIDsText = ""
+    /// A bullet this change created — deleted again on revert.
+    var createdExperienceID: UUID?
+    /// A variant this change created, and the bullet holding it.
+    var createdVariantID: UUID?
+    var createdVariantOwnerID: UUID?
+
+    init(_ application: JobApplication) {
+        summaryText = application.summaryText
+        skillsBlockText = application.skillsBlockText
+        sectionOrderText = application.sectionOrderText
+        selectedExperienceIDsText = application.selectedExperienceIDsText
+        selectedProjectIDsText = application.selectedProjectIDsText
+        selectedVariantIDsText = application.selectedVariantIDsText
+        experienceOrderText = application.experienceOrderText
+        employmentRoleDescriptionsText = application.employmentRoleDescriptionsText
+        hiddenRoleDescriptionIDsText = application.hiddenRoleDescriptionIDsText
+    }
+
+    func restore(into application: inout JobApplication) {
+        application.summaryText = summaryText
+        application.skillsBlockText = skillsBlockText
+        application.sectionOrderText = sectionOrderText
+        application.selectedExperienceIDsText = selectedExperienceIDsText
+        application.selectedProjectIDsText = selectedProjectIDsText
+        application.selectedVariantIDsText = selectedVariantIDsText
+        application.experienceOrderText = experienceOrderText
+        application.employmentRoleDescriptionsText = employmentRoleDescriptionsText
+        application.hiddenRoleDescriptionIDsText = hiddenRoleDescriptionIDsText
+    }
+}
+
 struct TailoringSession: Codable, Equatable {
     var pastedText: String
     var plan: TailoringPlan?
@@ -373,13 +422,17 @@ struct TailoringSession: Codable, Equatable {
     /// the stored record — so without this, an applied rewrite would show its own
     /// result as the "current" text and read as a no-op diff.
     var appliedBefore: [String: String]
+    /// State to restore when an applied change is reverted, keyed by change id.
+    var revertPoints: [String: TailoringRevertPoint]
 
     init(pastedText: String = "", plan: TailoringPlan? = nil, appliedChangeIDs: [String] = [],
-         appliedBefore: [String: String] = [:]) {
+         appliedBefore: [String: String] = [:],
+         revertPoints: [String: TailoringRevertPoint] = [:]) {
         self.pastedText = pastedText
         self.plan = plan
         self.appliedChangeIDs = appliedChangeIDs
         self.appliedBefore = appliedBefore
+        self.revertPoints = revertPoints
     }
 
     init(from decoder: Decoder) throws {
@@ -388,6 +441,10 @@ struct TailoringSession: Codable, Equatable {
         plan = try? c.decodeIfPresent(TailoringPlan.self, forKey: .plan)
         appliedChangeIDs = try c.decodeIfPresent([String].self, forKey: .appliedChangeIDs) ?? []
         appliedBefore = try c.decodeIfPresent([String: String].self, forKey: .appliedBefore) ?? [:]
+        // Absent in sessions saved before revert existed: those changes stay
+        // applied and simply can't be undone.
+        revertPoints = (try? c.decodeIfPresent([String: TailoringRevertPoint].self,
+                                               forKey: .revertPoints)) ?? [:]
     }
 
     static func decode(_ json: String) -> TailoringSession? {

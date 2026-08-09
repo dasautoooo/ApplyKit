@@ -501,6 +501,9 @@ extension ApplicationEditorView {
 
     func applyTailoringChange(_ change: TailoringChange) {
         guard !change.isBlocked, !change.applied, !change.isInformational else { return }
+        // Snapshot first: everything below rewrites application state in place,
+        // and this is what `revertTailoringChange` puts back.
+        var revert = TailoringRevertPoint(application)
         switch change.action {
         case .verdict:
             return
@@ -513,7 +516,9 @@ extension ApplicationEditorView {
         case .selection(let work, let projects):
             applySelection(work: work, projects: projects)
         case .replacement(let replacement):
-            applyReplacement(replacement)
+            let variantID = applyReplacement(replacement)
+            revert.createdVariantID = variantID
+            revert.createdVariantOwnerID = replacement.experienceID
         case .roleDescription(let employmentID, let include, let text):
             if let text, !text.trimmed.isEmpty {
                 application.setRoleDescription(text, for: employmentID)
@@ -522,14 +527,55 @@ extension ApplicationEditorView {
                 application.setRoleDescriptionHidden(!include, for: employmentID)
             }
         case .newBullet(let bullet, let toBank):
-            applyNewBullet(bullet, toBank: toBank)
+            revert.createdExperienceID = applyNewBullet(bullet, toBank: toBank)
         case .drop(let experienceID):
             application.setExperience(experienceID, selected: false)
             application.setProject(experienceID, selected: false)
             application.setExperienceOrder(application.experienceOrder.filter { $0 != experienceID })
         }
-        markApplied(change.id)
+        markApplied(change.id, revert: revert)
         persistApplicationChanges()
+    }
+
+    /// False for changes applied before revert existed — their session has no
+    /// snapshot, so there is nothing to put back.
+    func canRevertTailoringChange(_ change: TailoringChange) -> Bool {
+        change.applied && revertPoints[change.id] != nil
+    }
+
+    /// Puts back exactly what the change replaced, including deleting a bullet
+    /// or variant it created, and clears its applied marker so it can be
+    /// applied again.
+    func revertTailoringChange(_ change: TailoringChange) {
+        guard change.applied,
+              let session = TailoringSession.decode(storedApplication?.tailoringPlanData ?? ""),
+              let revert = session.revertPoints[change.id] else { return }
+
+        revert.restore(into: &application)
+
+        // A variant the rewrite minted is removed, not just deselected — leaving
+        // it behind would litter the bullet's wording list with dead entries.
+        if let variantID = revert.createdVariantID, let ownerID = revert.createdVariantOwnerID,
+           let index = store.experiences.firstIndex(where: { $0.id == ownerID }) {
+            var bullet = store.experiences[index]
+            bullet.variations.removeAll { $0.id == variantID }
+            store.experiences[index] = bullet
+            persistExperienceChanges(bullet)
+        }
+        if let createdID = revert.createdExperienceID,
+           let bullet = store.experiences.first(where: { $0.id == createdID }) {
+            store.experiences.removeAll { $0.id == createdID }
+            WorkspaceSyncService.deleteExperienceFile(bullet, remainingExperiences: store.experiences,
+                                                      settings: settings)
+        }
+
+        appliedBeforeText[change.id] = nil
+        if let index = tailoringChanges.firstIndex(where: { $0.id == change.id }) {
+            tailoringChanges[index].applied = false
+        }
+        persistTailoringSession(dropping: change.id)
+        persistApplicationChanges()
+        tailoringChanges = allTailoringChanges()
     }
 
     func applyAllTailoring() {
@@ -590,8 +636,9 @@ extension ApplicationEditorView {
     /// Creates a bullet the plan proposed, selects it for this résumé, and puts
     /// it last in its employment's order. `toBank == false` scopes it to this
     /// application (see `ExperienceScope`).
-    private func applyNewBullet(_ bullet: TailoringPlan.NewBullet, toBank: Bool) {
-        guard let settings else { return }
+    @discardableResult
+    private func applyNewBullet(_ bullet: TailoringPlan.NewBullet, toBank: Bool) -> UUID? {
+        guard let settings else { return nil }
         let employment = bullet.employmentID.flatMap { id in employments.first { $0.id == id } }
         var created = ExperienceBullet(
             company: employment?.companyName ?? "",
@@ -607,10 +654,12 @@ extension ApplicationEditorView {
 
         application.setExperience(created.id, selected: true)
         application.setExperienceOrder(application.experienceOrder + [created.id])
+        return created.id
     }
 
-    private func applyReplacement(_ replacement: ResolvedReplacement) {
-        guard let idx = store.experiences.firstIndex(where: { $0.id == replacement.experienceID }) else { return }
+    @discardableResult
+    private func applyReplacement(_ replacement: ResolvedReplacement) -> UUID? {
+        guard let idx = store.experiences.firstIndex(where: { $0.id == replacement.experienceID }) else { return nil }
         var bullet = store.experiences[idx]
         let variant = ExperienceVariation(
             name: replacement.name.isEmpty ? ExperienceVariation.defaultName(existing: bullet.variations) : replacement.name,
@@ -627,11 +676,12 @@ extension ApplicationEditorView {
             application.setExperience(replacement.experienceID, selected: true)
         }
         application.setVariant(variant.id, for: replacement.experienceID)
+        return variant.id
     }
 
     // MARK: - Session persistence
 
-    private func markApplied(_ id: String) {
+    private func markApplied(_ id: String, revert: TailoringRevertPoint) {
         if let idx = tailoringChanges.firstIndex(where: { $0.id == id }) {
             tailoringChanges[idx].applied = true
             // Captured before the bullet changes underneath us, so the diff
@@ -640,17 +690,23 @@ extension ApplicationEditorView {
                 appliedBeforeText[id] = before
             }
         }
+        revertPoints[id] = revert
         persistTailoringSession()
     }
 
     /// The plan itself belongs to the stored record (a run may have written it
     /// while another application was on screen); only the paste box and the
     /// applied markers come from this editor.
-    func persistTailoringSession() {
+    ///
+    /// `dropping` forgets one change's revert point — used when that change has
+    /// just been reverted, so the snapshot doesn't outlive what it describes.
+    func persistTailoringSession(dropping revertedID: String? = nil) {
+        if let revertedID { revertPoints[revertedID] = nil }
         let appliedIDs = tailoringChanges.filter(\.applied).map(\.id)
         let session = TailoringSession(pastedText: tailoringPastedText, plan: tailoringPlan,
                                        appliedChangeIDs: appliedIDs,
-                                       appliedBefore: appliedBeforeText)
+                                       appliedBefore: appliedBeforeText,
+                                       revertPoints: revertPoints.filter { appliedIDs.contains($0.key) })
         application.tailoringPlanData = session.encoded()
         if let index = store.applications.firstIndex(where: { $0.id == application.id }) {
             store.applications[index].tailoringPlanData = application.tailoringPlanData
@@ -663,6 +719,7 @@ extension ApplicationEditorView {
         guard let session = TailoringSession.decode(storedApplication?.tailoringPlanData ?? "") else { return }
         if tailoringPastedText.isEmpty { tailoringPastedText = session.pastedText }
         appliedBeforeText.merge(session.appliedBefore) { current, _ in current }
+        revertPoints.merge(session.revertPoints) { current, _ in current }
         if tailoringChanges.isEmpty {
             tailoringChanges = allTailoringChanges()
         }

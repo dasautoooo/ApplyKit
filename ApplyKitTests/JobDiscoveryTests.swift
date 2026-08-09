@@ -841,6 +841,27 @@ final class JobDiscoveryTests: XCTestCase {
         XCTAssertEqual(posting.url, "https://henkel.csod.com/ux/ats/careersite/1/job/REQ123?c=henkel")
     }
 
+    /// With a hundred boards the strip can't be scrolled to a company; the
+    /// search box is how you reach one.
+    func testBoardSearchFindsACompanyAmongMany() {
+        let boards = [
+            TrackedBoard(kindRaw: "workday", slug: "clio", companyName: "Clio"),
+            TrackedBoard(kindRaw: "ashby", slug: "cohere", companyName: "Cohere"),
+            TrackedBoard(kindRaw: "greenhouse", slug: "geotab", companyName: "Geotab"),
+            TrackedBoard(kindRaw: "workday", slug: "otppb", companyName: "Ontario Teachers' Pension Plan")
+        ]
+        XCTAssertEqual(TrackedBoard.matching("clio", in: boards).map(\.companyName), ["Clio"])
+        XCTAssertEqual(TrackedBoard.matching("  CLI ", in: boards).map(\.companyName), ["Clio"],
+                       "Case and surrounding space don't matter")
+        XCTAssertEqual(TrackedBoard.matching("teachers", in: boards).count, 1, "Matches anywhere in the name")
+        // The platform is searchable too, so "which of these are on Workday" works.
+        XCTAssertEqual(Set(TrackedBoard.matching("workday", in: boards).map(\.slug)), ["clio", "otppb"])
+        // A tenant slug that differs from the display name is still findable.
+        XCTAssertEqual(TrackedBoard.matching("otppb", in: boards).count, 1)
+        XCTAssertEqual(TrackedBoard.matching("", in: boards).count, 4, "An empty query hides nothing")
+        XCTAssertTrue(TrackedBoard.matching("nothing here", in: boards).isEmpty)
+    }
+
     // MARK: - Phenom
 
     func testPhenomDetectsTenantsOnTheirOwnDomains() throws {

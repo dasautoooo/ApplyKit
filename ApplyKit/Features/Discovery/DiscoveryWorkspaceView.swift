@@ -113,6 +113,7 @@ struct DiscoveryWorkspaceView: View {
     @State private var jdError = ""
     @State private var inboxWidth: CGFloat = 380
     @State private var boardFilter: Set<UUID> = []
+    @State private var boardSearch = ""
     @State private var sortOrder: JobSort = .postedNewest
 
     private enum InboxScope: String, CaseIterable, Identifiable {
@@ -191,23 +192,37 @@ struct DiscoveryWorkspaceView: View {
 
     // MARK: - Boards strip
 
+    private var visibleBoards: [TrackedBoard] {
+        TrackedBoard.matching(boardSearch, in: store.trackedBoards)
+    }
+
     private var boardsStrip: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(spacing: 10) {
                 Text("Tracked Boards").font(.headline)
-                Spacer()
-                Text("\(store.trackedBoards.count)")
+                Text(boardSearch.trimmed.isEmpty
+                     ? "\(store.trackedBoards.count)"
+                     : "\(visibleBoards.count) of \(store.trackedBoards.count)")
                     .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                // A horizontal strip of a hundred chips is not navigable by
+                // scrolling; this is how you get to one company. Clearing the
+                // selection stays where it already lives, on the inbox header.
+                if store.trackedBoards.count > 1 { boardSearchField }
             }
             if store.trackedBoards.isEmpty {
                 Text("Track a board by URL, pick a large employer, or paste a whole watchlist — then new roles are discovered automatically.")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
+            } else if visibleBoards.isEmpty {
+                Text("No tracked board matches “\(boardSearch.trimmed)”.")
                     .font(.callout).foregroundStyle(.secondary)
                     .padding(.vertical, 4)
             } else {
                 let counts = newCountsByBoard
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 10) {
-                        ForEach(store.trackedBoards) { board in
+                        ForEach(visibleBoards) { board in
                             boardChip(board, newCount: counts[board.id] ?? 0)
                         }
                     }
@@ -216,6 +231,27 @@ struct DiscoveryWorkspaceView: View {
             }
         }
         .padding(16)
+    }
+
+    private var boardSearchField: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+                .font(.caption).foregroundStyle(.secondary)
+            TextField("Find a company", text: $boardSearch)
+                .textFieldStyle(.plain)
+                .font(.callout)
+                .frame(width: 150)
+            if !boardSearch.isEmpty {
+                Button { boardSearch = "" } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(Color(nsColor: .textBackgroundColor))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor).opacity(0.4)))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     private func boardChip(_ board: TrackedBoard, newCount: Int) -> some View {

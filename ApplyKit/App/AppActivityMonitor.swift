@@ -30,7 +30,12 @@ final class AppActivityMonitor {
     /// Work in flight, oldest first. Several operations can run at once — one
     /// per application being tailored — so the bar reports a count rather than
     /// pretending there is a single current task.
-    private(set) var running: [(key: String, message: String)] = []
+    ///
+    /// `isAnonymous` marks an operation started without a key. Those are closed
+    /// in start order, and *only* by other key-less finishes: a key-less finish
+    /// that could close a keyed operation would strand it, since that
+    /// operation's own finish would then match nothing and remove nothing.
+    private(set) var running: [(key: String, message: String, isAnonymous: Bool)] = []
 
     private var collapseTask: Task<Void, Never>?
 
@@ -40,13 +45,17 @@ final class AppActivityMonitor {
 
     /// `key` identifies the operation so it can be finished precisely and so the
     /// UI can ask whether one particular thing is busy. Omit it for fire-and-
-    /// forget work; finishing then closes the oldest open operation.
+    /// forget work; finishing then closes the oldest open key-less operation.
+    /// The returned key finishes this exact operation either way.
     @MainActor
-    func start(_ message: String, key: String? = nil) {
+    @discardableResult
+    func start(_ message: String, key: String? = nil) -> String {
         collapseTask?.cancel()
-        running.append((key: key ?? UUID().uuidString, message: message))
+        let resolved = key ?? UUID().uuidString
+        running.append((key: resolved, message: message, isAnonymous: key == nil))
         self.message = message
         self.state = .running
+        return resolved
     }
 
     /// Re-words an operation already in flight, for work long enough that a
@@ -72,10 +81,15 @@ final class AppActivityMonitor {
     @MainActor
     private func finish(_ message: String, succeeded: Bool, key: String?) {
         collapseTask?.cancel()
-        if let key, let index = running.firstIndex(where: { $0.key == key }) {
+        if let key {
+            // A keyed finish closes its own operation and nothing else. If it's
+            // already gone, there is nothing to do — closing something else
+            // would strand that one instead.
+            if let index = running.firstIndex(where: { $0.key == key }) {
+                running.remove(at: index)
+            }
+        } else if let index = running.firstIndex(where: \.isAnonymous) {
             running.remove(at: index)
-        } else if key == nil, !running.isEmpty {
-            running.removeFirst()
         }
 
         self.lastMessage = message

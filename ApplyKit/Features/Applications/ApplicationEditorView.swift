@@ -40,6 +40,8 @@ struct ApplicationEditorView: View {
     /// Wording each applied rewrite replaced, so the diff doesn't collapse into
     /// "current == tailored" once the bullet has been updated.
     @State var appliedBeforeText: [String: String] = [:]
+    /// State to put back when an applied change is reverted, keyed by change id.
+    @State var revertPoints: [String: TailoringRevertPoint] = [:]
 
     @State var generatingDocumentKind: GeneratedDocumentKind?
     @State var masterResumePendingApply: MasterResume?

@@ -208,7 +208,9 @@ struct JobURLImportSheet: View {
         guard !isWorking else { return }
         isWorking = true
         errorMessage = ""
-        activityMonitor.start("Importing job posting…")
+        // Keyed, so this closes itself rather than whichever operation happens
+        // to be oldest — a discovery sweep is often running alongside.
+        let key = activityMonitor.start("Importing job posting…")
         Task {
             do {
                 let result = try await coordinator.importURL(
@@ -219,11 +221,11 @@ struct JobURLImportSheet: View {
                 )
                 draft = result
                 isWorking = false
-                activityMonitor.succeed("Job posting ready to review.")
+                activityMonitor.succeed("Job posting ready to review.", key: key)
             } catch {
                 isWorking = false
                 errorMessage = error.localizedDescription
-                activityMonitor.fail(error.localizedDescription)
+                activityMonitor.fail(error.localizedDescription, key: key)
             }
         }
     }
@@ -232,7 +234,7 @@ struct JobURLImportSheet: View {
         guard !isWorking else { return }
         isWorking = true
         errorMessage = ""
-        activityMonitor.start("Parsing pasted job description…")
+        let key = activityMonitor.start("Parsing pasted job description…")
         Task {
             do {
                 let result = try await coordinator.importPastedDescription(
@@ -244,11 +246,11 @@ struct JobURLImportSheet: View {
                 )
                 draft = result
                 isWorking = false
-                activityMonitor.succeed("Pasted job description ready to review.")
+                activityMonitor.succeed("Pasted job description ready to review.", key: key)
             } catch {
                 isWorking = false
                 errorMessage = error.localizedDescription
-                activityMonitor.fail(error.localizedDescription)
+                activityMonitor.fail(error.localizedDescription, key: key)
             }
         }
     }

@@ -299,6 +299,65 @@ final class ResumeTailorTests: XCTestCase {
         XCTAssertNotNil(empty.checksSummary, "Checks still summarize independently of the score")
     }
 
+    /// A revert point is a snapshot, not an inverse operation: the tailoring
+    /// actions rewrite whole fields (a selection change rewrites the order, a
+    /// rewrite repoints the variant), so putting the fields back is the only
+    /// way to land exactly where you were.
+    func testARevertPointRestoresEverythingTailoringTouches() throws {
+        var application = JobApplication(companyName: "Example", jobTitle: "iOS Engineer")
+        application.summaryText = "Original summary"
+        application.skillsBlockText = "Original skills"
+        let kept = UUID(), dropped = UUID(), variant = UUID()
+        application.setExperience(kept, selected: true)
+        application.setExperience(dropped, selected: true)
+        application.setExperienceOrder([kept, dropped])
+        application.setVariant(variant, for: kept)
+        application.setRoleDescription("Original role line", for: kept)
+        application.setSectionOrder([.projects, .experience])
+
+        let revert = TailoringRevertPoint(application)
+
+        // Everything a change could plausibly touch, changed.
+        application.summaryText = "Tailored summary"
+        application.skillsBlockText = "Tailored skills"
+        application.setExperience(dropped, selected: false)
+        application.setExperienceOrder([dropped, kept])
+        application.setVariant(UUID(), for: kept)
+        application.setRoleDescription("Rewritten role line", for: kept)
+        application.setRoleDescriptionHidden(true, for: kept)
+        application.setSectionOrder([.experience, .projects])
+
+        revert.restore(into: &application)
+
+        XCTAssertEqual(application.summaryText, "Original summary")
+        XCTAssertEqual(application.skillsBlockText, "Original skills")
+        XCTAssertTrue(application.selectedExperienceIDs.contains(dropped), "A dropped bullet comes back")
+        XCTAssertEqual(application.experienceOrder, [kept, dropped])
+        XCTAssertEqual(application.selectedVariantID(for: kept), variant, "The previous wording is reselected")
+        XCTAssertEqual(application.roleDescription(for: kept), "Original role line")
+        XCTAssertFalse(application.isRoleDescriptionHidden(for: kept))
+        // `setSectionOrder` appends whatever wasn't named, so compare the lead.
+        XCTAssertEqual(Array(application.sectionOrder.prefix(2)), [.projects, .experience])
+    }
+
+    func testRevertPointsSurviveTheSessionRoundTripAndOldSessionsStillLoad() throws {
+        var application = JobApplication(companyName: "Example", jobTitle: "Engineer")
+        application.summaryText = "Before"
+        var point = TailoringRevertPoint(application)
+        point.createdVariantID = UUID()
+        point.createdVariantOwnerID = UUID()
+
+        let session = TailoringSession(appliedChangeIDs: ["summary"], revertPoints: ["summary": point])
+        let restored = try XCTUnwrap(TailoringSession.decode(session.encoded()))
+        XCTAssertEqual(restored.revertPoints["summary"], point)
+
+        // A session written before revert existed still decodes; those changes
+        // stay applied and simply can't be undone.
+        let legacy = try XCTUnwrap(TailoringSession.decode(#"{"pastedText":"","appliedChangeIDs":["summary"]}"#))
+        XCTAssertTrue(legacy.revertPoints.isEmpty)
+        XCTAssertEqual(legacy.appliedChangeIDs, ["summary"])
+    }
+
     /// Applying a suggestion saves the editor's snapshot of the application. That
     /// snapshot predates the PDF check — the runner writes the review straight to
     /// the store — so an unguarded save wiped it, taking the suggestion you just
@@ -945,6 +1004,40 @@ final class ResumeTailorTests: XCTestCase {
         monitor.succeed("Done", key: "not-a-real-key")
         XCTAssertEqual(monitor.runningCount, 1, "An unmatched key must not close someone else's run")
         monitor.succeed("Done", key: "a")
+        XCTAssertEqual(monitor.runningCount, 0)
+    }
+
+    /// A key-less finish used to close the *oldest* run, whichever it was. With
+    /// a keyed discovery sweep running behind a key-less import, the import's
+    /// success closed the sweep, and the sweep's own keyed finish then matched
+    /// nothing — leaving "Importing job posting…" spinning forever.
+    func testAKeylessFinishCannotCloseAKeyedRun() {
+        let monitor = AppActivityMonitor()
+        monitor.start("Checking boards for new jobs…", key: "discovery-refresh")
+        monitor.start("Importing job posting…")           // key-less, started second
+        XCTAssertEqual(monitor.runningCount, 2)
+
+        monitor.succeed("Job posting ready to review.")   // key-less finish
+        XCTAssertEqual(monitor.runningCount, 1)
+        XCTAssertTrue(monitor.isRunning(key: "discovery-refresh"),
+                      "The key-less finish closes the import, not the keyed sweep")
+
+        monitor.succeed("Found 3 new postings.", key: "discovery-refresh")
+        XCTAssertEqual(monitor.runningCount, 0, "Nothing is left spinning")
+        XCTAssertEqual(monitor.state, .success)
+    }
+
+    /// The key `start` hands back finishes that exact operation, even when it
+    /// was started without one.
+    func testStartReturnsAKeyThatClosesThatRun() {
+        let monitor = AppActivityMonitor()
+        let first = monitor.start("Importing job posting…")
+        let second = monitor.start("Parsing pasted job description…")
+        XCTAssertEqual(monitor.runningCount, 2)
+
+        monitor.succeed("Parsed.", key: second)
+        XCTAssertEqual(monitor.runningCount, 1)
+        monitor.succeed("Imported.", key: first)
         XCTAssertEqual(monitor.runningCount, 0)
     }
 
