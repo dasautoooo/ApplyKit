@@ -282,12 +282,28 @@ private struct TailoringChangeRow: View {
             } else {
                 diffView
                 if let signal = change.signal {
-                    Text("Signal improved: \(signal)")
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(.secondary)
+                    let descriptions = TailoringSignal.descriptions(signal)
+                    if !descriptions.isEmpty {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Why this change")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            ForEach(descriptions, id: \.self) { description in
+                                Text(description)
+                                    .font(.callout)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
                 }
                 if let confirmation = change.confirmationNeeded {
                     Label("Confirm before submitting: \(confirmation)", systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let caution = change.caution {
+                    Label(caution, systemImage: "arrow.down.right.circle.fill")
                         .font(.callout)
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)

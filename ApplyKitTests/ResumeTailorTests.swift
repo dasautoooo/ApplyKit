@@ -407,6 +407,181 @@ final class ResumeTailorTests: XCTestCase {
         XCTAssertTrue(PromptBuilder.fitReassessmentRules.contains(ResumeTailorSkill.fitAssessment))
     }
 
+    /// The PDF check used to receive only each fact's `confirmation_needed`
+    /// caveat, under the heading "Facts the candidate has not yet confirmed" —
+    /// the fact itself was dropped. So an answer like "Kubernetes ingress for
+    /// Recursion's upload platform" reached the review as nothing but "the
+    /// specific implementation was not provided", and it correctly-but-wrongly
+    /// proposed deleting the ingress claim the candidate had just confirmed.
+    func testTheReviewSeesConfirmedFactsNotJustTheirCaveats() throws {
+        var brief = try XCTUnwrap(TailoringBrief.parse(from: #"{"fit_score": 7}"#))
+        brief.recalledFacts = [
+            RecalledFact(fact: "The candidate operated Kubernetes ingress for Recursion's upload platform.",
+                         relevance: "Adds direct production ingress experience.",
+                         confirmationNeeded: "The specific ingress implementation and production scale were not provided.")
+        ]
+        let review = PromptBuilder.tailoringReviewPrompt(
+            application: JobApplication(companyName: "Example", jobTitle: "Infrastructure Engineer"),
+            brief: brief,
+            rendered: ResumePDFInspector.Rendered(pageCount: 2, pages: ["a", "b"]),
+            renderedExperiences: [], employments: [], globalSkillsBlock: ""
+        )
+        // The fact reaches the review, with its context…
+        XCTAssertTrue(review.contains("operated Kubernetes ingress for Recursion's upload platform"))
+        XCTAssertTrue(review.contains("Adds direct production ingress experience"))
+        // …the caveat is still passed, but labelled as a missing detail…
+        XCTAssertTrue(review.contains("detail the candidate has not supplied"))
+        XCTAssertTrue(review.contains("The specific ingress implementation"))
+        // …and the old, load-bearing mislabel is gone.
+        XCTAssertFalse(review.contains("Facts the candidate has not yet confirmed"),
+                       "A supplied answer is confirmation, not a pending question")
+        // The rule that stops the deletion is stated outright.
+        XCTAssertTrue(review.contains("Never recommend deleting something the candidate has told you they did"))
+    }
+
+    /// Each clarify pass re-reads the same answers and restates what it learned,
+    /// so appending blindly gave the candidate one copy of every fact per round
+    /// — visible in the panel, and each copy arguing for itself in the build.
+    func testReRunningClarifyDoesNotDuplicateTheSameFact() throws {
+        var brief = try XCTUnwrap(TailoringBrief.parse(from: #"{"fit_score": 7}"#))
+        let questionID = UUID()
+
+        let first = TailoringClarification(updatedGaps: nil, newQuestions: nil, recalledFacts: [
+            RecalledFact(questionID: questionID, fact: "The candidate operated Kubernetes ingress for Recursion's upload platform.")
+        ])
+        brief.apply(first)
+        XCTAssertEqual(brief.recalledFacts.count, 1)
+
+        // Same answer, restated with a caveat: it updates in place.
+        let second = TailoringClarification(updatedGaps: nil, newQuestions: nil, recalledFacts: [
+            RecalledFact(questionID: questionID,
+                         fact: "The candidate operated Kubernetes ingress for Recursion's upload platform.",
+                         confirmationNeeded: "Scale was not provided.")
+        ])
+        brief.apply(second)
+        XCTAssertEqual(brief.recalledFacts.count, 1, "One fact, not one per round")
+        XCTAssertEqual(brief.recalledFacts.first?.confirmationNeeded, "Scale was not provided.",
+                       "The newer wording wins")
+
+        // Reworded without a question id — matched on the wording instead.
+        brief.apply(TailoringClarification(updatedGaps: nil, newQuestions: nil, recalledFacts: [
+            RecalledFact(fact: "Candidate operated the Kubernetes ingress for the Recursion upload platform.")
+        ]))
+        XCTAssertEqual(brief.recalledFacts.count, 1)
+
+        // A genuinely different fact still lands.
+        brief.apply(TailoringClarification(updatedGaps: nil, newQuestions: nil, recalledFacts: [
+            RecalledFact(fact: "The candidate participated in an on-call rotation at Alibaba.")
+        ]))
+        XCTAssertEqual(brief.recalledFacts.count, 2)
+    }
+
+    /// The review is asked to re-score fit "same rubric as Stage 1" — but the
+    /// posting was never in its prompt, only "eBay — iOS Engineer". It answered
+    /// honestly, with low confidence and a finding blaming the missing JD.
+    func testTheReviewSeesTheJobDescriptionItIsScoringAgainst() throws {
+        var application = JobApplication(companyName: "eBay", jobTitle: "iOS Engineer")
+        application.jobDescription = "You will own release engineering for the iOS app, including accessibility."
+        let review = PromptBuilder.tailoringReviewPrompt(
+            application: application, brief: nil,
+            rendered: ResumePDFInspector.Rendered(pageCount: 2, pages: ["a", "b"]),
+            renderedExperiences: [], employments: [], globalSkillsBlock: ""
+        )
+        XCTAssertTrue(review.contains("own release engineering for the iOS app"),
+                      "Fit can't be judged against a posting the review never sees")
+        XCTAssertTrue(review.contains("## Job description"))
+        XCTAssertTrue(review.contains("Judge fit against it"))
+        // Stage 1 and the build already had it; the review now uses the same block.
+        XCTAssertTrue(review.contains(PromptBuilder.tailoringJobBlock(application: application)))
+    }
+
+    /// The check is judging the artifact a whole pipeline produced, so it needs
+    /// what that pipeline knew: the posting, the master résumé, Stage 1's
+    /// judgment and plan, the candidate's answers and direction, their notes,
+    /// and what the previous check already found.
+    func testTheReviewSeesEverythingStageOneDid() throws {
+        var application = JobApplication(companyName: "eBay", jobTitle: "iOS Engineer")
+        application.jobDescription = "Own release engineering for the iOS app."
+        application.notes = "Referred by a staff engineer on the payments team."
+
+        var brief = try XCTUnwrap(TailoringBrief.parse(from: """
+        {
+          "fit_score": 7.5, "fit_confidence": "medium",
+          "investment_tier": "Standard", "investment_time": "20–35 minutes",
+          "effort_rationale": "More tailoring can plausibly change the outcome here.",
+          "candidate_story": "Systems-leaning iOS engineer",
+          "strong_matches": [{ "claim": "Ships release tooling", "evidence": "Cut release time 40%" }],
+          "gaps": [{ "id": "a11y", "kind": "genuine", "text": "No accessibility ownership", "mitigation": "State it plainly" }],
+          "plan": { "summary_direction": "Lead with release ownership", "skills_direction": "Put Swift first" },
+          "questions": [{ "kind": "recall", "question": "Have you owned an App Store release?" }]
+        }
+        """))
+        let questionID = try XCTUnwrap(brief.questions.first?.id)
+        brief.setAnswer("Yes — I ran the release train for two years.", for: questionID)
+        brief.buildNotes = "Keep the Tuya bullet; it's my strongest."
+
+        let previous = try XCTUnwrap(TailoringReview.parse(
+            from: #"{"verdict": "Needs layout verification", "fit_score": 7, "findings": [{"severity": "fix", "text": "Skills table extracts column-first", "fix": "Re-render sequentially"}], "checks": [{"question": "Are roles reverse chronological?", "status": "fail", "note": "Tuya precedes Recursion"}]}"#,
+            pageCount: 2, documentPath: "/tmp/r.pdf", round: 1))
+
+        let master = MasterResume(name: "iOS Platform")
+        let review = PromptBuilder.tailoringReviewPrompt(
+            application: application, brief: brief,
+            rendered: ResumePDFInspector.Rendered(pageCount: 2, pages: ["a", "b"]),
+            renderedExperiences: [], employments: [], globalSkillsBlock: "",
+            masterResume: master, allExperiences: [], previous: previous
+        )
+
+        // The posting, the master résumé, and the candidate's notes.
+        XCTAssertTrue(review.contains("Own release engineering for the iOS app."))
+        XCTAssertTrue(review.contains("iOS Platform"), "The master résumé it was built from")
+        XCTAssertTrue(review.contains("Referred by a staff engineer"))
+        // Stage 1's judgment, evidence, gaps, and plan.
+        XCTAssertTrue(review.contains("Fit: 7.5/10 (medium confidence)"))
+        XCTAssertTrue(review.contains("Investment: Standard, 20–35 minutes"))
+        XCTAssertTrue(review.contains("Ships release tooling"))
+        XCTAssertTrue(review.contains("No accessibility ownership"))
+        XCTAssertTrue(review.contains("Lead with release ownership"))
+        // The Q&A and the candidate's own direction.
+        XCTAssertTrue(review.contains("Have you owned an App Store release?"))
+        XCTAssertTrue(review.contains("I ran the release train for two years"))
+        XCTAssertTrue(review.contains("Keep the Tuya bullet"))
+        // The previous check, and the instruction not to parrot it.
+        XCTAssertTrue(review.contains("What check #1 found"))
+        XCTAssertTrue(review.contains("Skills table extracts column-first"))
+        XCTAssertTrue(review.contains("Tuya precedes Recursion"), "Including which checks failed")
+        XCTAssertTrue(review.contains("judge the file in front of you, not this list"))
+        // The master résumé must not widen what may be edited.
+        XCTAssertTrue(review.contains("is not on this document and is not yours to edit"))
+    }
+
+    func testTheFirstCheckHasNoPreviousBlock() {
+        let review = PromptBuilder.tailoringReviewPrompt(
+            application: JobApplication(companyName: "Example", jobTitle: "Engineer"), brief: nil,
+            rendered: ResumePDFInspector.Rendered(pageCount: 2, pages: ["a"]),
+            renderedExperiences: [], employments: [], globalSkillsBlock: ""
+        )
+        XCTAssertFalse(review.contains("What check #"))
+        XCTAssertTrue(review.contains("No brief was produced"), "A missing brief is stated, not silently skipped")
+    }
+
+    /// A 7.7 judgment rendered as "7.5/10" sat directly above a finding quoting
+    /// "the 7.7 fit judgment". Show what was actually judged, and ask for the
+    /// half-point scale rather than silently rounding to it.
+    func testFitScoresAreShownExactlyAsJudged() {
+        XCTAssertEqual(FitScore.text(7.7), "7.7/10", "Not silently rounded to 7.5")
+        XCTAssertEqual(FitScore.text(7.5), "7.5/10")
+        XCTAssertEqual(FitScore.text(8), "8/10", "A whole number drops the decimal")
+        XCTAssertNil(FitScore.text(nil))
+
+        let review = PromptBuilder.tailoringReviewPrompt(
+            application: JobApplication(companyName: "Example", jobTitle: "Engineer"), brief: nil,
+            rendered: ResumePDFInspector.Rendered(pageCount: 2, pages: ["a"]),
+            renderedExperiences: [], employments: [], globalSkillsBlock: ""
+        )
+        XCTAssertTrue(review.contains("0.5 increments"))
+    }
+
     func testTheReviewPromptShowsStageOnesScoreOnlyAsReference() throws {
         let brief = try XCTUnwrap(TailoringBrief.parse(from: #"{"fit_score": 6, "fit_confidence": "low"}"#))
         let review = PromptBuilder.tailoringReviewPrompt(
@@ -416,8 +591,8 @@ final class ResumeTailorTests: XCTestCase {
             renderedExperiences: [], employments: [], globalSkillsBlock: ""
         )
         XCTAssertTrue(review.contains("Fit: 6/10 (low confidence)"))
-        XCTAssertTrue(review.contains("for reference only"))
-        XCTAssertTrue(review.contains("re-score from what actually got built, not from this"))
+        XCTAssertTrue(review.contains("Stage 1's numbers are context, not an answer to copy"))
+        XCTAssertTrue(review.contains("re-score fit from what actually got built"))
     }
 
     /// Role-description lines are per-application state ApplyKit owns, so the
@@ -523,6 +698,115 @@ final class ResumeTailorTests: XCTestCase {
             application: application, allExperiences: [], employments: [], globalSkillsBlock: ""
         )
         XCTAssertTrue(stageTwo.contains("ApplyKit holds the résumé itself"))
+    }
+
+    /// The real case: the PDF check replaced a bullet opening with a result
+    /// ("Made … reproducible") by one opening with the work ("Built automated
+    /// test infrastructure…"), justified as "Technical depth". The prompts
+    /// forbid that in two places and it happened anyway, so it's checked.
+    func testARewriteThatTradesAResultOpeningForAnActivityOpeningIsFlagged() {
+        let current = """
+        Made scientific model evaluation reproducible by implementing Hydra-configured dataset adapters and task \
+        definitions, distributing execution through Slurm, and tracking configurations in W&B.
+        """
+        let proposed = """
+        Built automated test infrastructure for recall@k, precision@k, and z-score evaluations using \
+        Hydra-configured dataset adapters, distributed Slurm execution, and W&B tracking.
+        """
+        let warning = BulletOpening.downgradeWarning(current: current, proposed: proposed)
+        XCTAssertNotNil(warning, "Result opening traded for an activity opening")
+        XCTAssertEqual(warning?.contains("built"), true)
+        XCTAssertEqual(warning?.contains("made"), true)
+
+        // The other direction is an upgrade, not a downgrade.
+        XCTAssertNil(BulletOpening.downgradeWarning(current: proposed, proposed: current))
+        // Two activity openings, or two result openings, are left alone.
+        XCTAssertNil(BulletOpening.downgradeWarning(current: "Built X by doing Y.",
+                                                    proposed: "Designed X by doing Z."))
+        XCTAssertNil(BulletOpening.downgradeWarning(current: "Cut latency 40% by caching.",
+                                                    proposed: "Reduced latency 40% by caching."))
+        // An unrecognized opening is not guessed at.
+        XCTAssertNil(BulletOpening.downgradeWarning(current: "Partnered with design on X.",
+                                                    proposed: "Built X with design."))
+        XCTAssertTrue(BulletOpening.opensWithOutcome("  Reduced p99 by 30%."), "Leading space and case ignored")
+    }
+
+    /// "Signal improved: Technical depth" names a category, not a reason. The
+    /// meaning is fixed text — what a signal does for a reader doesn't vary by
+    /// application, so there's nothing gained by asking the model each time.
+    func testEverySignalExplainsItself() {
+        for signal in TailoringSignal.allCases {
+            let described = TailoringSignal.described(signal.rawValue)
+            XCTAssertTrue(described.hasPrefix(signal.rawValue), signal.rawValue)
+            XCTAssertTrue(described.count > signal.rawValue.count + 20,
+                          "\(signal.rawValue) needs to say what it means, not just name itself")
+        }
+        XCTAssertEqual(TailoringSignal.described("Technical depth"),
+                       "Technical depth — makes the mechanism visible, so the skill is evidenced rather than merely listed")
+        // The model's wording varies; the gloss shouldn't be lost to case.
+        XCTAssertEqual(TailoringSignal(loose: "technical depth"), .technicalDepth)
+        XCTAssertEqual(TailoringSignal(loose: "ATS Terminology"), .atsTerminology)
+        // A signal outside the skill's vocabulary is passed through, not dropped.
+        XCTAssertEqual(TailoringSignal.described("Momentum"), "Momentum")
+        XCTAssertNil(TailoringSignal(loose: "Momentum"))
+    }
+
+    /// The field is specified as exactly one signal, and replies routinely name
+    /// several — "Relevance | Technical depth | Ownership | Concision". Matching
+    /// the whole string found nothing, so every gloss was lost and the row
+    /// showed the bare labels it was meant to replace.
+    func testSeveralSignalsInOneReplyAreEachExplained() {
+        let descriptions = TailoringSignal.descriptions("Relevance | Technical depth | Ownership | Concision")
+        XCTAssertEqual(descriptions.count, 4)
+        XCTAssertTrue(descriptions[0].hasPrefix("Relevance — "))
+        XCTAssertTrue(descriptions[3].hasPrefix("Concision — "))
+        XCTAssertTrue(descriptions.allSatisfy { $0.contains(" — ") }, "Every one explains itself")
+
+        // The separators replies actually use.
+        XCTAssertEqual(TailoringSignal.all(in: "Clarity, ATS terminology").count, 2)
+        XCTAssertEqual(TailoringSignal.all(in: "Impact and Ownership").count, 2)
+        XCTAssertEqual(TailoringSignal.all(in: "Relevance / Concision").count, 2)
+        // Repeats collapse, and order of appearance is kept.
+        XCTAssertEqual(TailoringSignal.all(in: "Impact | Impact | Clarity"), [.impact, .clarity])
+        // Still fine with the single value the schema actually asks for.
+        XCTAssertEqual(TailoringSignal.all(in: "Technical depth"), [.technicalDepth])
+    }
+
+    /// The schema wrote this field's allowed values as a pipe-separated list,
+    /// which is itself a plausible JSON string — so replies copied the list.
+    /// Every other field uses an angle-bracket placeholder; this one now does.
+    func testTheSignalFieldAsksForExactlyOneValue() {
+        let build = PromptBuilder.tailoringBuildPrompt(
+            brief: try! XCTUnwrap(TailoringBrief.parse(from: #"{"fit_score": 7}"#)),
+            application: JobApplication(companyName: "Example", jobTitle: "Engineer"),
+            allExperiences: [], employments: [], globalSkillsBlock: ""
+        )
+        XCTAssertTrue(build.contains("<exactly one of: Relevance, Technical depth"))
+        XCTAssertFalse(build.contains("\"Relevance | Technical depth"),
+                       "A pipe-separated value list reads as a literal value")
+    }
+
+    func testRewritesMustArgueTheirCaseNotLabelIt() {
+        let build = PromptBuilder.tailoringBuildPrompt(
+            brief: try! XCTUnwrap(TailoringBrief.parse(from: #"{"fit_score": 7}"#)),
+            application: JobApplication(companyName: "Example", jobTitle: "Engineer"),
+            allExperiences: [], employments: [], globalSkillsBlock: ""
+        )
+        XCTAssertTrue(build.contains("Name the hiring value for THIS posting"))
+        XCTAssertTrue(build.contains("`signal` already carries the category — the reason exists to justify it"))
+        // The rejected forms are named, since they're what it defaults to.
+        XCTAssertTrue(build.contains("improves technical depth"))
+        XCTAssertTrue(build.contains("better matches the JD"))
+    }
+
+    func testTheReviewIsToldItsRewritesAreStillBullets() {
+        let review = PromptBuilder.tailoringReviewPrompt(
+            application: JobApplication(companyName: "Example", jobTitle: "Engineer"), brief: nil,
+            rendered: ResumePDFInspector.Rendered(pageCount: 2, pages: ["a"]),
+            renderedExperiences: [], employments: [], globalSkillsBlock: ""
+        )
+        XCTAssertTrue(review.contains("held to the bullet rules above, not loosened because it is fixing a finding"))
+        XCTAssertTrue(review.contains("De-duplicating two bullets does not license"))
     }
 
     func testRewriteRulesForbidWeakeningAndNoOps() {

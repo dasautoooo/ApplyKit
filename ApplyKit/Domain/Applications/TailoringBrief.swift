@@ -379,12 +379,7 @@ extension TailoringBrief {
     var priority: TailoringPriority? { recommendedPriority.flatMap(TailoringPriority.init) }
 
     /// Score rendered the way the skill states it, e.g. "7.5/10".
-    var fitScoreText: String? {
-        guard let fitScore else { return nil }
-        let rounded = (fitScore * 2).rounded() / 2
-        let whole = rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%.1f", rounded)
-        return "\(whole)/10"
-    }
+    var fitScoreText: String? { FitScore.text(fitScore) }
 
     mutating func setAnswer(_ text: String, for questionID: UUID) {
         guard let index = questions.firstIndex(where: { $0.id == questionID }) else { return }
@@ -431,6 +426,13 @@ extension TailoringBrief {
 
         var result = ClarifyResult()
         for fact in clarification.recalledFacts ?? [] where !fact.fact.trimmed.isEmpty {
+            // A later pass re-reads the same answers and restates what it
+            // learned, so without this the same fact accumulates a copy per
+            // round — and each copy argues for itself in the build.
+            if let index = recalledFacts.firstIndex(where: { RecalledFact.areEquivalent($0, fact) }) {
+                recalledFacts[index] = fact
+                continue
+            }
             recalledFacts.append(fact)
             result.recordedFacts += 1
         }
@@ -591,6 +593,20 @@ struct TailoringClarification: Codable, Equatable {
     }
 }
 
+enum FitScore {
+    /// "7.5/10", or "8/10" for a whole number.
+    ///
+    /// Shown exactly as judged. Rounding to the nearest half-point here made
+    /// the panel disagree with the model's own prose beside it — a 7.7 judgment
+    /// displayed as "7.5" next to a finding that said "the 7.7 fit judgment".
+    /// The half-point convention is asked for in the prompt instead.
+    static func text(_ value: Double?) -> String? {
+        guard let value else { return nil }
+        let text = value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
+        return "\(text)/10"
+    }
+}
+
 /// Something true the candidate confirmed, in plain terms. Stage 2 decides
 /// whether it becomes a new bullet or strengthens an existing one.
 struct RecalledFact: Codable, Equatable, Identifiable {
@@ -632,5 +648,14 @@ struct RecalledFact: Codable, Equatable, Identifiable {
         fact = try c.decode(String.self, forKey: .fact)
         relevance = LossyDecode.string(from: c, forKey: .relevance)
         confirmationNeeded = LossyDecode.string(from: c, forKey: .confirmationNeeded)
+    }
+
+    /// Two records of the same thing. A later clarify pass re-reads the same
+    /// answers and restates what it learned, usually reworded — so identity is
+    /// the answer it came from, or failing that the wording of the fact itself,
+    /// compared the same way repeated questions are.
+    static func areEquivalent(_ lhs: RecalledFact, _ rhs: RecalledFact) -> Bool {
+        if let left = lhs.questionID, let right = rhs.questionID { return left == right }
+        return QuestionSimilarity.areEquivalent(lhs.fact, rhs.fact)
     }
 }

@@ -216,12 +216,7 @@ extension TailoringReview {
     var score: Double? { fitScore }
 
     /// "8.5/10", in the same form as the brief's `fitScoreText`.
-    var scoreText: String? {
-        guard let score else { return nil }
-        let rounded = (score * 2).rounded() / 2
-        let whole = rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%.1f", rounded)
-        return "\(whole)/10"
-    }
+    var scoreText: String? { FitScore.text(score) }
 
     /// "7 of 9 checks pass", the sentence behind the findings — no longer what
     /// the score is computed from, but still worth showing alongside it.

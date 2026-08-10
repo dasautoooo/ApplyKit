@@ -681,27 +681,12 @@ struct TailoringBriefView: View {
                         detailText("Checked before the latest build — run it again for a current answer.")
                     }
                     if let checks = review.checksSummary {
-                        detailText("\(checks) in the skill's final validation. The score above is a fit re-check against this rendered document, same rubric as Stage 1.")
+                        detailText("\(checks). The score above is a separate judgment — how well this document fits the role, on the same rubric Stage 1 used.")
                     }
                     if let note = review.extractionNote?.trimmed, !note.isEmpty {
                         detailText(note)
                     }
-                    if !review.failedChecks.isEmpty {
-                        DisclosureGroup("Checks it failed (\(review.failedChecks.count))") {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(review.failedChecks) { check in
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        bodyText(check.question)
-                                        if let note = check.note?.trimmed, !note.isEmpty {
-                                            detailText(note)
-                                        }
-                                    }
-                                }
-                            }
-                            .padding(.top, 6)
-                        }
-                        .font(.system(size: 13))
-                    }
+                    checklistBlock(review)
                     ForEach(review.findings) { finding in
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(alignment: .top, spacing: 6) {
@@ -747,7 +732,56 @@ struct TailoringBriefView: View {
         return result
     }
 
-    /// Same bands as the fit score, so the two read as one scale.
+    /// The skill's own pre-submission checklist, run against the rendered file.
+    ///
+    /// It answers a different question from the findings below it: a finding is
+    /// something to do, whereas a check is a question about the document that
+    /// may have no action attached — "are the JD's most important
+    /// responsibilities supported by evidence?" can fail because of what the
+    /// candidate hasn't done, which no edit fixes. Both are worth seeing, so
+    /// the difference is spelled out rather than left to be inferred.
+    @ViewBuilder
+    private func checklistBlock(_ review: TailoringReview) -> some View {
+        let unresolved = review.failedChecks + review.unclearChecks
+        if !unresolved.isEmpty {
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 10) {
+                    detailText("These are the skill's pre-submission questions, asked of the rendered file. A \"no\" is not always something to fix — some are statements about fit that only different experience would change. Anything that can be fixed by editing appears as a finding below.")
+                    ForEach(unresolved) { check in
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text(check.checkStatus == .fail ? "No" : "Unclear")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(check.checkStatus == .fail ? Color.orange : Color.secondary)
+                                    .frame(width: 52, alignment: .leading)
+                                bodyText(check.question)
+                            }
+                            if let note = check.note?.trimmed, !note.isEmpty {
+                                detailText(note).padding(.leading, 58)
+                            }
+                            if let section = check.section?.trimmed, !section.isEmpty {
+                                Text(section)
+                                    .font(.caption).foregroundStyle(.tertiary)
+                                    .padding(.leading, 58)
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 8)
+            } label: {
+                Text(checklistLabel(review))
+                    .font(.system(size: 13, weight: .medium))
+            }
+        }
+    }
+
+    private func checklistLabel(_ review: TailoringReview) -> String {
+        var parts: [String] = []
+        if !review.failedChecks.isEmpty { parts.append("\(review.failedChecks.count) answered no") }
+        if !review.unclearChecks.isEmpty { parts.append("\(review.unclearChecks.count) unclear") }
+        return "Skill checklist — " + parts.joined(separator: ", ")
+    }
+
     /// Same bands as `fitColor` — this is the same fit score, re-checked
     /// against the rendered document.
     private func reviewScoreColor(_ score: Double) -> Color {

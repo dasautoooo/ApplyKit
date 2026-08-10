@@ -72,6 +72,9 @@ struct TailoringChange: Identifiable {
     var signal: String?
     /// A fact to verify before submitting — advisory, never blocking.
     var confirmationNeeded: String?
+    /// A problem ApplyKit spotted in the proposal itself, rather than one the
+    /// model reported. Advisory: the rewrite is still offered.
+    var caution: String?
     var source: Source = .build
 
     var isBlocked: Bool { blockedReason != nil }
@@ -379,6 +382,9 @@ extension ApplicationEditorView {
                 signal: replacement.signal?.trimmed.isEmpty == false ? replacement.signal : nil,
                 confirmationNeeded: replacement.confirmationNeeded?.trimmed.isEmpty == false
                     ? replacement.confirmationNeeded : nil,
+                // The prompts forbid trading an opening result for an opening
+                // activity, twice, and it happens anyway. Say so on the row.
+                caution: BulletOpening.downgradeWarning(current: currentText, proposed: replacement.text),
                     source: source
                 ))
         }

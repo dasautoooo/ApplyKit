@@ -259,17 +259,23 @@ final class TailoringRunner {
         // build's job, with the whole pool in view.
         let selected = context.application.selectedExperienceIDs
             .union(context.application.selectedProjectIDs)
+        let previous = context.application.tailoringReview
         let prompt = PromptBuilder.tailoringReviewPrompt(
             application: context.application,
             brief: context.application.tailoringBrief,
             rendered: rendered,
             renderedExperiences: context.experiences.filter { selected.contains($0.id) },
             employments: context.employments,
-            globalSkillsBlock: context.profile.skillsBlock
+            globalSkillsBlock: context.profile.skillsBlock,
+            masterResume: context.masterResume,
+            // For resolving the master résumé's ids to bullet titles. The
+            // *editable* pool stays restricted to what the document contains.
+            allExperiences: context.experiences,
+            previous: previous
         )
         let path = document.pdfPath
         // Checking is meant to be repeated until the document is sound.
-        let round = (context.application.tailoringReview?.round ?? 0) + 1
+        let round = (previous?.round ?? 0) + 1
 
         await run(.review, for: applicationID, message: "Reviewing the rendered résumé") { backend in
             let attempt = try await backend.runStructured(

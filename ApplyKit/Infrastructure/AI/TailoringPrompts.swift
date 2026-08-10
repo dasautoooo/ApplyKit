@@ -160,6 +160,20 @@ extension PromptBuilder {
     - The candidate's direction outranks your preferences, but not their credibility: if following it would \
     weaken the résumé, break chronology, or overstate what the evidence supports, do the defensible thing and \
     say plainly in `uncertainties` what you did not do and why.
+
+    ## What a rewrite's `reason` has to say (ApplyKit)
+
+    The candidate reads the reason next to the before-and-after and decides whether to apply it, so it has to \
+    argue the case, not label it. Name the hiring value for THIS posting: which requirement or responsibility \
+    the new wording serves, and what a reader gets from it that the current wording withholds. Two clauses is \
+    usually enough.
+
+    Not sufficient: "improves technical depth", "better matches the JD", "clearer and more concise", or \
+    restating what the new sentence says. `signal` already carries the category — the reason exists to justify it.
+
+    Sufficient, in the skill's own terms: "foregrounds the reliability outcome this role owns"; "replaces our \
+    internal name for it with the term the posting uses"; "makes the mechanism visible, so Kubernetes is \
+    evidenced rather than listed in Skills"; "drops the vendor clause to keep the stronger result on page one".
     """
 
     /// The skill's pre-delivery checklist, run against the model's own draft.
@@ -191,6 +205,83 @@ extension PromptBuilder {
 
         ## Job description
         \(application.jobDescription.trimmed.isEmpty ? "None provided." : application.jobDescription)
+        """
+    }
+
+    /// Everything Stage 1 concluded, for a later stage that has to work from the
+    /// same understanding: the judgment, the plan behind it, and the candidate's
+    /// own answers and direction. Recalled facts are omitted — they get their
+    /// own block, with the rules about what a caveat does and doesn't mean.
+    static func tailoringBriefDigest(_ brief: TailoringBrief?) -> String {
+        guard let brief else { return "## Stage 1's judgment\nNo brief was produced for this application." }
+
+        var sections: [String] = []
+        var verdict: [String] = []
+        if let fit = brief.fitScoreText {
+            verdict.append("Fit: \(fit)\(brief.fitConfidence.map { " (\($0) confidence)" } ?? "")")
+        }
+        if let tier = brief.investmentTier?.trimmed, !tier.isEmpty {
+            verdict.append("Investment: \(tier)\(brief.investmentTime.map { ", \($0)" } ?? "")")
+        }
+        if let rationale = brief.effortRationale?.trimmed, !rationale.isEmpty {
+            verdict.append(rationale)
+        }
+        if !verdict.isEmpty { sections.append("### Verdict\n" + verdict.joined(separator: "\n")) }
+
+        if !brief.strongMatches.isEmpty {
+            sections.append("### What Stage 1 judged strongest\n" + brief.strongMatches.map { match in
+                var line = "- \(match.claim)"
+                if let evidence = match.evidence?.trimmed, !evidence.isEmpty { line += " — \(evidence)" }
+                return line
+            }.joined(separator: "\n"))
+        }
+        if !brief.gaps.isEmpty {
+            sections.append("### Gaps it identified\n" + brief.gaps.map {
+                "- [\($0.kind)] \($0.text)\($0.mitigation.map { " — \($0)" } ?? "")"
+            }.joined(separator: "\n"))
+        }
+        let directions = [
+            brief.plan.summaryDirection.map { "- Summary was meant to: \($0)" },
+            brief.plan.skillsDirection.map { "- Skills were meant to: \($0)" }
+        ].compactMap { $0 }
+        if !directions.isEmpty { sections.append("### The plan the build worked from\n" + directions.joined(separator: "\n")) }
+
+        if !brief.answeredQuestions.isEmpty {
+            sections.append("### What the candidate was asked, and said\n" + brief.answeredQuestions.map {
+                "- Q: \($0.question)\n  A: \($0.answer.trimmed)"
+            }.joined(separator: "\n"))
+        }
+        if !brief.buildNotes.trimmed.isEmpty {
+            sections.append("### The candidate's own direction for the build\n\(brief.buildNotes.trimmed)")
+        }
+
+        guard !sections.isEmpty else { return "## Stage 1's judgment\nNothing recorded." }
+        return "## Stage 1's judgment\n\n" + sections.joined(separator: "\n\n")
+    }
+
+    /// What the last check of this résumé found. Only the most recent is kept,
+    /// so this is one round back, not the whole history.
+    static func tailoringPreviousCheckBlock(_ previous: TailoringReview?) -> String {
+        guard let previous else { return "" }
+        var lines: [String] = []
+        if let score = previous.scoreText { lines.append("Fit then: \(score)") }
+        if let verdict = previous.verdict?.trimmed, !verdict.isEmpty { lines.append("Verdict: \(verdict)") }
+        lines.append("Pages: \(previous.pageCount)")
+        for finding in previous.findings {
+            var line = "- [\(finding.severity)] \(finding.text)"
+            if let fix = finding.fix?.trimmed, !fix.isEmpty { line += "\n  proposed fix: \(fix)" }
+            lines.append(line)
+        }
+        for check in previous.failedChecks {
+            lines.append("- failed check: \(check.question)\(check.note.map { " — \($0)" } ?? "")")
+        }
+        return """
+        ## What check #\(previous.round) found
+
+        The candidate may or may not have acted on these — judge the file in front of you, not this list. Say so
+        plainly when something here is now fixed, and don't repeat a finding the document no longer supports.
+
+        \(lines.joined(separator: "\n"))
         """
     }
 
@@ -411,6 +502,8 @@ extension PromptBuilder {
         }
 
         Rules:
+        - `fit_score` is out of 10 in 0.5 increments — 7.5, not 7.7. It is shown to the candidate exactly as you
+        write it, so an off-scale number reads as false precision.
         - Use ONLY ids from the pool. Omit `experience_id` rather than inventing one.
         - Every gap needs a stable `id`; reuse it if you mention the gap elsewhere.
         - Omit `research_notes` entirely when no research was performed.
@@ -673,7 +766,7 @@ extension PromptBuilder {
               "text": "<tailored bullet text>",
               "name": "<short variant label, e.g. the company or angle>",
               "reason": "<the hiring value of this rewrite — not 'matches the JD'>",
-              "signal": "Relevance | Technical depth | Impact | Clarity | ATS terminology | Concision | Ownership",
+              "signal": "<exactly one of: Relevance, Technical depth, Impact, Clarity, ATS terminology, Concision, Ownership>",
               "confirmation_needed": "<fact to verify before submitting, or omit>"
             }
           ],
@@ -722,12 +815,26 @@ extension PromptBuilder {
                                       rendered: ResumePDFInspector.Rendered,
                                       renderedExperiences: [ExperienceBullet],
                                       employments: [Employment],
-                                      globalSkillsBlock: String) -> String {
+                                      globalSkillsBlock: String,
+                                      masterResume: MasterResume? = nil,
+                                      allExperiences: [ExperienceBullet] = [],
+                                      previous: TailoringReview? = nil) -> String {
         let pool = candidateExperiencePool(allExperiences: renderedExperiences, employments: employments)
         let story = brief?.candidateStory?.trimmed
-        let uncertainties = brief?.recalledFacts
-            .compactMap { $0.confirmationNeeded?.trimmed }
-            .filter { !$0.isEmpty } ?? []
+        // The whole fact, not just its caveat. Passing only `confirmation_needed`
+        // told the review that something the candidate had explicitly confirmed
+        // was unconfirmed, and it dutifully proposed deleting the claim.
+        let confirmed = (brief?.recalledFacts ?? []).filter { !$0.fact.trimmed.isEmpty }
+        let confirmedLines = confirmed.map { fact -> String in
+            var line = "- \(fact.fact.trimmed)"
+            if let relevance = fact.relevance?.trimmed, !relevance.isEmpty {
+                line += "\n  why it matters: \(relevance)"
+            }
+            if let confirm = fact.confirmationNeeded?.trimmed, !confirm.isEmpty {
+                line += "\n  detail the candidate has not supplied: \(confirm)"
+            }
+            return line
+        }
 
         return """
         \(tailoringIdentity)
@@ -737,20 +844,43 @@ extension PromptBuilder {
         The résumé has been generated. Review the actual file — this is the check the skill defers until a \
         render exists, so nothing here is an estimate.
 
-        ## The role
-        \(application.companyName) — \(application.jobTitle)
+        \(tailoringJobBlock(application: application))
+
+        \(tailoringCanonicalSourceBlock(masterResume: masterResume,
+                                        allExperiences: allExperiences.isEmpty ? renderedExperiences : allExperiences))
+
+        The master résumé is context for judging identity, nothing more. Any id it names that is absent from the \
+        pool below is not on this document and is not yours to edit.
 
         ## The candidate story this résumé is meant to carry
         \(story?.isEmpty == false ? story! : "Not recorded.")
 
-        \(brief?.fitScoreText.map { "## Stage 1's fit judgment (for reference only — re-score from what actually got built, not from this)\nFit: \($0)\(brief?.fitConfidence.map { " (\($0) confidence)" } ?? "")\n" } ?? "")
+        \(tailoringBriefDigest(brief))
+
+        Stage 1's numbers are context, not an answer to copy: re-score fit from what actually got built.
+
+        \(application.notes.trimmed.isEmpty ? "" : "## Candidate notes\n\(application.notes)\n")
+        \(tailoringPreviousCheckBlock(previous))
+
         ## Measured from the file
         - Pages: \(rendered.pageCount)
         - Text extraction: \(rendered.isTextEmpty
             ? "produced NO text at all — treat this as a blocking ATS failure"
             : "produced text, reproduced below with its page breaks")
 
-        \(uncertainties.isEmpty ? "" : "## Facts the candidate has not yet confirmed\n" + uncertainties.map { "- \($0)" }.joined(separator: "\n"))
+        \(confirmedLines.isEmpty ? "" : """
+        ## What the candidate confirmed when asked
+
+        These are the candidate's own answers, given in the clarify round. They are evidence: a claim resting on \
+        one of them is supported, and the résumé may say so.
+
+        A "detail the candidate has not supplied" line means the answer was thin on specifics — scale, tooling, \
+        exactly which parts they ran. That is a reason to keep the wording modest, and at most to note it in a \
+        finding. It is NOT grounds to call the claim unconfirmed or to propose removing it. Never recommend \
+        deleting something the candidate has told you they did.
+
+        \(confirmedLines.joined(separator: "\n"))
+        """)
 
         ## Extracted text
         \(rendered.text)
@@ -846,7 +976,7 @@ extension PromptBuilder {
             "ordered_project_ids": ["<project ids, in final order>"],
             "replacements": [
               { "experience_id": "<pool id>", "text": "<tightened bullet>", "name": "<short label>",
-                "reason": "<which finding this resolves>", "signal": "Concision | Clarity | Relevance | Impact | Technical depth | ATS terminology | Ownership" }
+                "reason": "<which finding this resolves>", "signal": "<exactly one of: Relevance, Technical depth, Impact, Clarity, ATS terminology, Concision, Ownership>" }
             ],
             "drops": [{ "experience_id": "<pool id>", "reason": "<which finding this resolves>" }],
             "role_descriptions": [
@@ -864,7 +994,16 @@ extension PromptBuilder {
         confirm — rather than guessing at them. An honest `unclear` is worth more than a confident guess.
         - `fit_score` and `fit_confidence` are the fit re-check above — judge them from what this rendered \
         document actually says, not from the brief's earlier score or the plan that produced it. A résumé that \
-        lost its strongest evidence to a page-budget cut should score lower here than Stage 1 scored the plan.
+        lost its strongest evidence to a page-budget cut should score lower here than Stage 1 scored the plan. \
+        Score out of 10 in 0.5 increments — 7.5, not 7.7 — and quote the same number in any finding that \
+        mentions it; the candidate sees both side by side.
+        - The job description above is the posting this résumé is aimed at. Judge fit against it. Say confidence \
+        is limited for want of the posting only when no description was provided at all.
+        - Every entry in `edits.replacements` is a résumé bullet and is held to the bullet rules above, not \
+        loosened because it is fixing a finding. Before you return one, compare its opening to the current \
+        wording: if the current bullet opens with a result and yours opens with what was built, you have \
+        downgraded it. Fix the opening or return no rewrite at all. De-duplicating two bullets does not license \
+        turning the survivor into a description of the work.
         - In `findings`, name a bullet by its opening words, not by its id — these sentences are read by a person. \
         Ids belong in `edits`, where they are applied by machine.
         - `blocker` means do not submit it like this: over the two-page cap, a section missing, text that does \
