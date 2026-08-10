@@ -241,10 +241,53 @@ extension ApplicationEditorView {
                     Label(tailoringChanges.isEmpty ? "Reconcile" : "Re-reconcile", systemImage: "sparkles")
                 }
                 .disabled(isReconcilingTailoring || tailoringPastedText.trimmed.isEmpty || aiBackend == nil)
+
+                Divider().padding(.vertical, 4)
+                reviewPasteControls
             }
             .padding(.top, 10)
         }
         .font(.subheadline)
+    }
+
+    /// The same fallback for the PDF check: a review done in ChatGPT lands in
+    /// the same panel, with the same score and the same applyable edits, rather
+    /// than living outside the app.
+    @ViewBuilder private var reviewPasteControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Reviewed the PDF in ChatGPT?").font(.callout.weight(.medium))
+                Spacer()
+                Button {
+                    copyRenderedResumeText()
+                } label: {
+                    Label("Copy the PDF's text", systemImage: "doc.on.clipboard")
+                }
+                .disabled(!tailoringProgress.hasRenderedPDF)
+                .help(tailoringProgress.hasRenderedPDF
+                      ? "Copy what the rendered PDF actually extracts, to paste into ChatGPT"
+                      : "Generate the résumé PDF first")
+            }
+
+            Text("Paste its review below. It's read into the same check — score, findings, and any edits it proposes.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            TextEditor(text: $pastedReviewText)
+                .font(.body.monospaced())
+                .frame(minHeight: 120)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(Color(nsColor: .separatorColor))
+                )
+
+            Button {
+                Task { await reconcilePastedReview(pastedReviewText) }
+            } label: {
+                Label("Read Pasted Review", systemImage: "text.magnifyingglass")
+            }
+            .disabled(isReviewingResume || pastedReviewText.trimmed.isEmpty || aiBackend == nil)
+        }
     }
 }
 

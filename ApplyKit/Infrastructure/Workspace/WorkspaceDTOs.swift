@@ -62,6 +62,7 @@ struct ApplicationFileDTO: Codable {
     var sectionOrder: [String]?
     var skillsBlock: String?; var summary: String?
     var fitScore: Double?
+    var resumeFontSizePt: Int?; var resumeMarginInches: Double?
     var archivedAt: String?; var createdAt: String?; var updatedAt: String?
     var paths: ApplicationPathsDTO; var documents: [ApplicationDocumentLinkDTO]
     enum CodingKeys: String, CodingKey {
@@ -78,6 +79,7 @@ struct ApplicationFileDTO: Codable {
         case sectionOrder = "section_order"
         case skillsBlock = "skills_block"; case summary
         case fitScore = "fit_score"
+        case resumeFontSizePt = "resume_font_size_pt"; case resumeMarginInches = "resume_margin_inches"
         case archivedAt = "archived_at"; case createdAt = "created_at"; case updatedAt = "updated_at"
         case paths; case documents
     }

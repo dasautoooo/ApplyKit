@@ -2,6 +2,21 @@ import Foundation
 
 enum ResumeRenderer {
     static let sectionsPlaceholder = "{{APPLYKIT_SECTIONS}}"
+    static let fontSizePlaceholder = "{{APPLYKIT_FONT_SIZE}}"
+    static let marginPlaceholder = "{{APPLYKIT_MARGIN}}"
+
+    /// Substitutes the per-application page settings.
+    ///
+    /// Applied to every résumé render, including templates written before these
+    /// placeholders existed — those simply have nothing to replace, and keep
+    /// whatever they hardcode.
+    static func applyPageLayout(to template: String, fontSizePt: Int, marginInches: Double) -> String {
+        template
+            .replacingOccurrences(of: fontSizePlaceholder,
+                                  with: "\(ResumePageLayout.clampFontSize(fontSizePt))pt")
+            .replacingOccurrences(of: marginPlaceholder,
+                                  with: ResumePageLayout.marginText(marginInches))
+    }
 
     struct RenderResult { let rendered: String; let warnings: [String] }
 
@@ -41,14 +56,33 @@ enum ResumeRenderer {
         return wrappedSection(title: "Summary", content: smartEscapeLatex(summary))
     }
 
+    /// Empty in, empty out — a section with nothing to show is dropped rather
+    /// than rendered as a bare heading.
+    ///
+    /// The caller filters empty strings out of the section list, but the
+    /// wrapper was always non-empty, so the filter never fired: an application
+    /// with no summary (or no projects, or a cleared Skills block) shipped a
+    /// heading with nothing under it.
     private static func wrappedSection(title: String, content: String) -> String {
-        """
+        guard hasRenderableContent(content) else { return "" }
+        return """
         \\begin{rSection}{\(title)}
 
         \(content)
 
         \\end{rSection}
         """
+    }
+
+    /// Whether a block would put anything on the page. A LaTeX comment is not
+    /// nothing as a string but is nothing in the PDF — `experienceBlock` returns
+    /// "% No experience bullets selected." when there is nothing to render, and
+    /// that was enough to keep an empty Experience heading alive.
+    static func hasRenderableContent(_ content: String) -> Bool {
+        content.split(whereSeparator: { $0.isNewline }).contains { line in
+            let trimmed = String(line).trimmed
+            return !trimmed.isEmpty && !trimmed.hasPrefix("%")
+        }
     }
 
     static func experienceBlock(selectedExperiences: [ExperienceBullet], variantSelections: [UUID: UUID],

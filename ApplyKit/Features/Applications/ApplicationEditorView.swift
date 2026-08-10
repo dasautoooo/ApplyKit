@@ -37,6 +37,8 @@ struct ApplicationEditorView: View {
     @State var showTailoringSheet = false
     @State var tailoringPastedText = ""
     @State var tailoringChanges: [TailoringChange] = []
+    /// A PDF review pasted from ChatGPT, awaiting reconciliation.
+    @State var pastedReviewText = ""
     /// Wording each applied rewrite replaced, so the diff doesn't collapse into
     /// "current == tailored" once the bullet has been updated.
     @State var appliedBeforeText: [String: String] = [:]

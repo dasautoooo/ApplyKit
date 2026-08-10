@@ -127,6 +127,8 @@ enum WorkspaceFiles {
             sectionOrder: application.sectionOrder.map(\.rawValue),
             skillsBlock: application.skillsBlockText, summary: application.summaryText,
             fitScore: application.fitScore,
+            resumeFontSizePt: application.resumeFontSizePt,
+            resumeMarginInches: application.resumeMarginInches,
             archivedAt: WorkspaceDateCodec.string(from: application.archivedAt),
             createdAt: WorkspaceDateCodec.string(from: application.createdAt), updatedAt: WorkspaceDateCodec.string(from: application.updatedAt),
             paths: ApplicationPathsDTO(jobDescription: jobDescriptionFile, notes: notesFile, jdAnalysis: jdAnalysisFile,
@@ -189,6 +191,11 @@ enum WorkspaceFiles {
         app.sectionOrderText = (dto.sectionOrder ?? []).joined(separator: ",")
         app.skillsBlockText = dto.skillsBlock ?? ""
         app.summaryText = dto.summary ?? ""
+        // Absent in files written before these were settable. Those take the
+        // current defaults rather than the template's old hardcoded 11pt/0.4in,
+        // so one setting governs every application until it's overridden.
+        app.resumeFontSizePt = ResumePageLayout.clampFontSize(dto.resumeFontSizePt ?? ResumePageLayout.defaultFontSizePt)
+        app.resumeMarginInches = ResumePageLayout.clampMargin(dto.resumeMarginInches ?? ResumePageLayout.defaultMarginInches)
         app.archivedAt = WorkspaceDateCodec.date(from: dto.archivedAt)
         app.createdAt = WorkspaceDateCodec.date(from: dto.createdAt) ?? Date()
         app.updatedAt = WorkspaceDateCodec.date(from: dto.updatedAt) ?? Date()

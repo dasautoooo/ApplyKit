@@ -348,6 +348,8 @@ extension ApplicationEditorView {
                     Spacer()
                 }
 
+                resumePageSetup
+
                 ForEach(documents) { document in
                     DocumentRow(
                         document: document,
@@ -357,6 +359,55 @@ extension ApplicationEditorView {
                         onRebuild: { _ in await rebuildDocument(document, allDocuments: documents) }
                     )
                 }
+            }
+        }
+    }
+
+    /// How the résumé is set on the page, for this application only.
+    ///
+    /// Font size and margins belong to the application rather than the shared
+    /// template: the same content is worth a dense two pages for one role and a
+    /// roomy one for another. They sit here, with the build button, because
+    /// that is where their effect is — changing one means rebuilding.
+    @ViewBuilder private var resumePageSetup: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Body font size").font(.callout)
+                    Spacer()
+                    Picker("", selection: Binding(
+                        get: { ResumePageLayout.clampFontSize(application.resumeFontSizePt) },
+                        set: { application.resumeFontSizePt = $0 }
+                    )) {
+                        ForEach(ResumePageLayout.fontSizes, id: \.self) { Text("\($0) pt").tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                HStack {
+                    Text("Page margin").font(.callout)
+                    Spacer()
+                    Text(ResumePageLayout.marginText(application.resumeMarginInches))
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    Stepper("", value: Binding(
+                        get: { ResumePageLayout.clampMargin(application.resumeMarginInches) },
+                        set: { application.resumeMarginInches = ResumePageLayout.clampMargin($0) }
+                    ), in: ResumePageLayout.marginRange, step: 0.05)
+                    .labelsHidden()
+                }
+                Text("Applies to this application's résumé, and takes effect the next time you build it. Tightening either buys space — but the tailor is told to cut content rather than shrink the page, so treat it as a last resort.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 8)
+        } label: {
+            HStack(spacing: 6) {
+                Text("Résumé page setup").font(.callout)
+                Text("\(ResumePageLayout.clampFontSize(application.resumeFontSizePt)) pt · \(ResumePageLayout.marginText(application.resumeMarginInches)) margins")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }

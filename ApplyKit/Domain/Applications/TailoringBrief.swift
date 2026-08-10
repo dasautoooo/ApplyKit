@@ -123,6 +123,11 @@ struct TailoringBrief: Codable, Equatable {
         var rewrites: [Item]
         var exclusions: [Item]
 
+        var hasContent: Bool {
+            summaryDirection != nil || skillsDirection != nil
+                || !selections.isEmpty || !rewrites.isEmpty || !exclusions.isEmpty
+        }
+
         struct Item: Codable, Equatable {
             var experienceID: UUID?
             /// Fallback label when the model couldn't resolve an id.
@@ -193,6 +198,19 @@ struct TailoringBrief: Codable, Equatable {
         case researchNotes = "research_notes"
         case generatedAt = "generated_at"
         case clarifyRound = "clarify_round"
+    }
+
+    /// An empty brief, to merge a pasted reply's judgment into when the
+    /// application has never run Stage 1.
+    init() {
+        strongMatches = []
+        gaps = []
+        plan = ProposedPlan()
+        questions = []
+        recalledFacts = []
+        buildNotes = ""
+        generatedAt = Date()
+        clarifyRound = 0
     }
 
     /// Every field is read leniently: a model that quotes its score, invents a

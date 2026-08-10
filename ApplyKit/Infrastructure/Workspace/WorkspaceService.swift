@@ -78,7 +78,10 @@ enum WorkspaceService {
         }
         var warnings: [String] = []
         if kind == .resume {
-            let templateText = try String(contentsOf: template, encoding: .utf8)
+            let templateText = ResumeRenderer.applyPageLayout(
+                to: try String(contentsOf: template, encoding: .utf8),
+                fontSizePt: application.resumeFontSizePt,
+                marginInches: application.resumeMarginInches)
             let render = ResumeRenderer.render(
                 template: templateText, variantSelections: application.selectedVariantIDs,
                 selectedExperiences: selectedExperiences, selectedProjects: selectedProjects, employments: employments,
@@ -131,7 +134,13 @@ enum WorkspaceService {
         if FileManager.default.fileExists(atPath: texURL.path) {
             try FileManager.default.removeItem(at: texURL)
         }
-        let templateText = try String(contentsOf: template, encoding: .utf8)
+        // A master résumé has no per-application page settings, so the preview
+        // renders at the defaults — the placeholders still have to go, or they
+        // reach the .tex and latexmk fails on them.
+        let templateText = ResumeRenderer.applyPageLayout(
+            to: try String(contentsOf: template, encoding: .utf8),
+            fontSizePt: ResumePageLayout.defaultFontSizePt,
+            marginInches: ResumePageLayout.defaultMarginInches)
         let render = ResumeRenderer.render(
             template: templateText, variantSelections: masterResume.selectedVariantIDs,
             selectedExperiences: selectedExperiences, selectedProjects: selectedProjects, employments: employments,

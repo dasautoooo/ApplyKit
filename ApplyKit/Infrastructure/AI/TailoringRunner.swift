@@ -198,17 +198,43 @@ final class TailoringRunner {
             allExperiences: context.experiences,
             employments: context.employments
         )
-        await runPlan(.reconcile, applicationID: applicationID, prompt: prompt,
-                      message: "Reconciling tailoring suggestion", label: "tailoring-reconcile",
-                      failure: "Couldn't extract any changes from that suggestion",
-                      success: { "Found \($0) change\($0 == 1 ? "" : "s") to review." },
-                      application: context.application,
-                      pastedText: pastedReply)
+        await run(.reconcile, for: applicationID, message: "Reconciling tailoring suggestion") { backend in
+            let attempt = try await backend.runStructured(
+                prompt: prompt,
+                schema: PromptBuilder.pastedReplySchemaSummary,
+                parse: TailoringPastedReply.parse(from:)
+            )
+            guard let reply = attempt.value, let plan = reply.plan else {
+                return .failure(self.unparseableMessage(attempt.raw, label: "tailoring-reconcile",
+                                                        application: context.application,
+                                                        what: "Couldn't extract any changes from that suggestion"))
+            }
+            var count = 0
+            var keptJudgment = false
+            self.mutate(applicationID) { target in
+                let session = TailoringSession(pastedText: pastedReply, plan: plan, appliedChangeIDs: [])
+                target.tailoringPlanData = session.encoded()
+                count = plan.replacements?.count ?? 0
+
+                // The reply's judgment fills the brief panel, which the paste
+                // route used to leave empty. Anything the candidate has done in
+                // the app — questions, answers, facts, notes — survives.
+                if let judged = reply.brief, judged.hasContent {
+                    let existing = target.tailoringBrief ?? TailoringBrief()
+                    target.setTailoringBrief(existing.merging(judgmentFrom: judged))
+                    keptJudgment = true
+                }
+            }
+            let changes = "Found \(count) change\(count == 1 ? "" : "s") to review."
+            return .success(keptJudgment ? "\(changes) Its fit judgment is on the brief." : changes)
+        }
     }
 
+    /// Stage 2's build. The paste route runs its own pass — it extracts the
+    /// reply's judgment as well as its edits.
     private func runPlan(_ job: Job, applicationID: UUID, prompt: String, message: String, label: String,
                          failure: String, success: @escaping (Int) -> String,
-                         application: JobApplication, pastedText: String? = nil) async {
+                         application: JobApplication) async {
         await run(job, for: applicationID, message: message) { backend in
             let attempt = try await backend.runStructured(
                 prompt: prompt,
@@ -222,9 +248,10 @@ final class TailoringRunner {
             var count = 0
             self.mutate(applicationID) { target in
                 // Applied markers belong to the plan they were recorded against,
-                // so a fresh plan starts with none.
+                // so a fresh plan starts with none. The paste box keeps whatever
+                // is in it.
                 let session = TailoringSession(
-                    pastedText: pastedText ?? TailoringSession.decode(target.tailoringPlanData)?.pastedText ?? "",
+                    pastedText: TailoringSession.decode(target.tailoringPlanData)?.pastedText ?? "",
                     plan: plan,
                     appliedChangeIDs: []
                 )
@@ -232,6 +259,51 @@ final class TailoringRunner {
                 count = plan.replacements?.count ?? 0
             }
             return .success(success(count))
+        }
+    }
+
+    /// Takes a review pasted from ChatGPT instead of running one locally, and
+    /// stores it as the same `TailoringReview` the in-app check produces — same
+    /// panel, same score, same applyable edits.
+    func reconcileReview(applicationID: UUID, pastedReview: String) async {
+        guard let store, let context = context(for: applicationID),
+              !pastedReview.trimmed.isEmpty,
+              !isRunning(.review, for: applicationID) else { return }
+
+        let selected = context.application.selectedExperienceIDs
+            .union(context.application.selectedProjectIDs)
+        let prompt = PromptBuilder.reviewReconciliationPrompt(
+            pastedReview: pastedReview.trimmed,
+            application: context.application,
+            renderedExperiences: context.experiences.filter { selected.contains($0.id) },
+            employments: context.employments
+        )
+
+        // Page count is measured, never transcribed — the reviewer may have been
+        // looking at a different build, and the file is the authority. Without a
+        // rendered PDF there is nothing to measure, so it stays 0.
+        let document = store.documents.first {
+            $0.applicationID == applicationID && $0.kindRaw == GeneratedDocumentKind.resume.rawValue
+        }
+        let rendered = document.flatMap { ResumePDFInspector.inspect(path: $0.pdfPath) }
+        let round = (context.application.tailoringReview?.round ?? 0) + 1
+
+        await run(.review, for: applicationID, message: "Reading pasted résumé review") { backend in
+            let attempt = try await backend.runStructured(
+                prompt: prompt,
+                schema: PromptBuilder.reviewSchemaSummary,
+                parse: { TailoringReview.parse(from: $0, pageCount: rendered?.pageCount ?? 0,
+                                               documentPath: document?.pdfPath ?? "", round: round) }
+            )
+            guard let review = attempt.value else {
+                return .failure(self.unparseableMessage(attempt.raw, label: "review-reconcile",
+                                                        application: context.application,
+                                                        what: "the pasted review"))
+            }
+            self.mutate(applicationID) { application in
+                application.tailoringReviewData = review.encoded()
+            }
+            return .success(review.summary)
         }
     }
 

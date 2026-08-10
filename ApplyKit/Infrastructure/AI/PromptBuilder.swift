@@ -302,7 +302,7 @@ enum PromptBuilder {
             .joined(separator: "\n")
 
         return """
-        You are a precise data-transformation tool for the ApplyKit résumé builder. Convert the pasted tailoring suggestion into a single JSON object describing the exact edits to apply to this application's résumé. Reference bullets ONLY by the ids in the candidate pool below.
+        You are a precise data-transformation tool for the ApplyKit résumé builder. Convert the pasted tailoring suggestion into a single JSON object with two parts: what it JUDGED about this application, and the exact EDITS to apply to the résumé. Reference bullets ONLY by the ids in the candidate pool below.
 
         ## Candidate experience pool (the ONLY valid ids)
         \(pool)
@@ -320,10 +320,33 @@ enum PromptBuilder {
 
         ---
 
-        Produce the plan as JSON with this schema. Every field is OPTIONAL — include a field ONLY when the suggestion clearly specifies it; omit anything it does not address (an omitted field means "leave unchanged").
+        Produce JSON with this schema. Every field is OPTIONAL — include a field ONLY when the suggestion clearly specifies it; omit anything it does not address (an omitted field means "leave unchanged").
 
         {
-          "summary": "<tailored professional summary text, or omit>",
+          "brief": {
+            "fit_score": <the suggestion's fit score out of 10, or omit>,
+            "fit_confidence": "<low | medium | high, if stated>",
+            "recommended_priority": "<High | Normal | Low | Skip, if stated>",
+            "investment_tier": "<Minimal | Standard | Deep, if stated>",
+            "investment_time": "<the time range it recommends, e.g. 20–35 minutes>",
+            "effort_rationale": "<what it says about whether more tailoring changes the outcome>",
+            "candidate_story": "<the single positioning thesis it says the résumé should carry>",
+            "strong_matches": [
+              { "claim": "<what it says the candidate can credibly claim>", "evidence": "<the accomplishment behind it>", "experience_id": "<pool id, or omit>" }
+            ],
+            "gaps": [
+              { "id": "<short-slug>", "kind": "genuine | presentation | unknown", "text": "<the gap it names>", "mitigation": "<what it says to do about it>" }
+            ],
+            "plan": {
+              "summary_direction": "<what it says the summary should establish>",
+              "skills_direction": "<what it says about which skills lead>",
+              "selections": [{ "experience_id": "<pool id>", "reason": "<why it earns space>" }],
+              "rewrites": [{ "experience_id": "<pool id>", "reason": "<what wording change it wants>" }],
+              "exclusions": [{ "experience_id": "<pool id>", "reason": "<why it loses its place>" }]
+            },
+            "research_notes": [{ "claim": "<what it found>", "source_url": "<url>", "inference": false }]
+          },
+          "summary": "<tailored professional summary text; \"\" if the suggestion says to drop the summary; omit the field if it doesn't discuss one>",
           "skills_latex": "<tailored LaTeX skills block, or omit>",
           "section_order": ["<section names from the vocabulary above>"],
           "ordered_experience_ids": ["<work-bullet ids to include, in final order>"],
@@ -346,14 +369,87 @@ enum PromptBuilder {
         }
 
         Rules:
+        - `brief` is the suggestion's own judgment of this application, transcribed. Fill in whatever it states — \
+        a fit score, a priority, an investment tier, the story it says the résumé should tell, the matches it \
+        calls strong, the gaps it names. Omit what it doesn't say. You are transcribing a judgment someone else \
+        made: never score, rank, or assess the application yourself, and never soften or sharpen what it said.
         - The explanatory fields (`summary_rationale`, `deliberately_omitted`, `drops`, `readiness`, `uncertainties`) \
         carry across only what the suggestion actually says. Do not compose your own reasoning or verdict.
         - Use ONLY ids that appear in the candidate pool. If the suggestion references a bullet you cannot confidently match to a pool id (e.g. a truncated quote), leave it out rather than guessing.
         - `ordered_experience_ids` / `ordered_project_ids` are the FINAL selected sets in the suggestion's stated order; bullets the suggestion drops are simply absent.
         - Put a bullet in `replacements` only when the suggestion gives new wording for it. A replaced bullet should also appear in the appropriate ordered_* list so it stays selected.
         - `skills_latex` must be raw LaTeX if provided (do not escape it). `summary` is plain prose.
+        - A suggestion that decides against a summary — "omit the summary", "drop the summary", "no summary" — \
+        is saying to remove one that exists. Return `"summary": ""` for that. Leaving the field out means \
+        "unchanged", which would keep a summary the suggestion just argued against.
         - Use `role_descriptions` when the suggestion says to include/show or drop/hide an employment's role-description line, or rewords it. Set `include` only when visibility changes (omit otherwise); set `text` only when the wording changes (omit otherwise). Reference employments only by the ids listed above.
         - Do NOT invent experience, metrics, or ids.
+
+        Return ONLY the JSON object — no prose, no markdown fences.
+        """
+    }
+
+    /// Converts a PDF review pasted from ChatGPT into the same `TailoringReview`
+    /// the in-app check produces, so both routes land in one panel.
+    ///
+    /// Transcription only, like `tailoringReconciliationPrompt`: the judgment is
+    /// the pasted reviewer's, and page count comes from the file rather than
+    /// from either model.
+    static func reviewReconciliationPrompt(pastedReview: String,
+                                           application: JobApplication,
+                                           renderedExperiences: [ExperienceBullet],
+                                           employments: [Employment]) -> String {
+        let pool = candidateExperiencePool(allExperiences: renderedExperiences, employments: employments)
+        return """
+        You are a precise data-transformation tool for the ApplyKit résumé builder. Convert the pasted review of a \
+        rendered résumé into a single JSON object. You are transcribing someone else's review: never judge the \
+        résumé yourself, and never soften, sharpen, or add to what it says.
+
+        ## The role
+        \(application.companyName) — \(application.jobTitle)
+
+        ## What is on this résumé (the ONLY valid ids)
+        \(pool)
+
+        ## Pasted review
+        \(pastedReview)
+
+        ---
+
+        Produce JSON with this schema. Every field is OPTIONAL — include a field ONLY when the review states it.
+
+        {
+          "fit_score": <the review's score out of 10, if it gives one>,
+          "fit_confidence": "<low | medium | high, if stated>",
+          "verdict": "<Ready to submit | Ready after minor corrections | Needs factual confirmation | Needs layout verification>",
+          "extraction_note": "<what it says about how the text extracts, one line>",
+          "checks": [
+            { "section": "<the part of its checklist this came from>", "question": "<the question it answered>",
+              "status": "pass | fail | unclear", "note": "<its evidence>" }
+          ],
+          "findings": [
+            { "severity": "blocker | fix | note", "text": "<what it says is wrong>", "fix": "<what it says to do, or omit>" }
+          ],
+          "edits": {
+            "summary": "<replacement summary it gives, or omit>",
+            "skills_latex": "<replacement Skills block, or omit>",
+            "ordered_experience_ids": ["<bullet ids in the order it asks for>"],
+            "replacements": [
+              { "experience_id": "<pool id>", "text": "<the replacement wording it gives>", "name": "<short label>",
+                "reason": "<its reason>", "signal": "<exactly one of: Relevance, Technical depth, Impact, Clarity, ATS terminology, Concision, Ownership>" }
+            ],
+            "drops": [{ "experience_id": "<pool id>", "reason": "<its reason>" }],
+            "role_descriptions": [{ "employment_id": "<employment id>", "include": false, "text": "<tighter wording, or omit>" }]
+          }
+        }
+
+        Rules:
+        - `edits` carries across only wording the review actually supplies. A finding it describes but gives no \
+        replacement text for belongs in `findings` alone — do not write the fix yourself.
+        - Use ONLY ids from the pool above. If the review names a bullet you cannot confidently match to one, \
+        leave it out of `edits` rather than guessing, and let the finding carry it.
+        - Do not transcribe page count: ApplyKit measures that from the file.
+        - Do NOT invent checks, findings, scores, or ids.
 
         Return ONLY the JSON object — no prose, no markdown fences.
         """

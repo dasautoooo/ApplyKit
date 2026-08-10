@@ -734,6 +734,253 @@ final class ResumeTailorTests: XCTestCase {
     /// "Signal improved: Technical depth" names a category, not a reason. The
     /// meaning is fixed text — what a signal does for a reader doesn't vary by
     /// application, so there's nothing gained by asking the model each time.
+    /// The paste route extracted only the edits, so a ChatGPT reply's score,
+    /// priority, story, matches and gaps were read and thrown away — the brief
+    /// panel stayed empty for anyone working mostly in ChatGPT.
+    func testAPastedReplyCarriesItsJudgmentNotJustItsEdits() throws {
+        let response = """
+        Here's the tailoring.
+
+        ```json
+        {
+          "brief": {
+            "fit_score": 8, "fit_confidence": "high", "recommended_priority": "High",
+            "investment_tier": "Deep", "investment_time": "45–60 minutes",
+            "effort_rationale": "Strong match; deeper tailoring is worth it.",
+            "candidate_story": "Platform-leaning iOS engineer",
+            "strong_matches": [{ "claim": "Owns release engineering", "evidence": "Ran the release train" }],
+            "gaps": [{ "id": "a11y", "kind": "genuine", "text": "No accessibility ownership" }],
+            "plan": { "summary_direction": "Lead with release ownership" }
+          },
+          "summary": "Tailored summary.",
+          "replacements": [
+            { "experience_id": "\(UUID().uuidString)", "text": "Rewritten bullet.", "reason": "Sharper." }
+          ]
+        }
+        ```
+        """
+        let reply = try XCTUnwrap(TailoringPastedReply.parse(from: response))
+        let judged = try XCTUnwrap(reply.brief)
+        XCTAssertEqual(judged.fitScore, 8)
+        XCTAssertEqual(judged.recommendedPriority, "High")
+        XCTAssertEqual(judged.investmentTier, "Deep")
+        XCTAssertEqual(judged.candidateStory, "Platform-leaning iOS engineer")
+        XCTAssertEqual(judged.strongMatches.count, 1)
+        XCTAssertEqual(judged.gaps.first?.id, "a11y")
+        // …and the edits still come through.
+        XCTAssertEqual(reply.plan?.summary, "Tailored summary.")
+        XCTAssertEqual(reply.plan?.replacements?.count, 1)
+    }
+
+    /// A reply in the older shape — edits only, no judgment — must still apply.
+    func testAReplyWithNoJudgmentStillYieldsItsEdits() throws {
+        let reply = try XCTUnwrap(TailoringPastedReply.parse(from: #"{"summary": "Just the edits."}"#))
+        XCTAssertNil(reply.brief)
+        XCTAssertEqual(reply.plan?.summary, "Just the edits.")
+        // And a reply with nothing usable is rejected rather than half-applied.
+        XCTAssertNil(TailoringPastedReply.parse(from: #"{"unrelated": true}"#))
+    }
+
+    /// Pasting brings a judgment; it must not cost the candidate the work they
+    /// did in the app. Questions, answers, facts and build notes are theirs.
+    func testPastingAJudgmentKeepsTheAnswersAlreadyGiven() throws {
+        var existing = try XCTUnwrap(TailoringBrief.parse(from: """
+        { "fit_score": 6, "candidate_story": "Old story",
+          "questions": [{ "kind": "recall", "question": "Have you owned a release?" }] }
+        """))
+        let questionID = try XCTUnwrap(existing.questions.first?.id)
+        existing.setAnswer("Yes, for two years.", for: questionID)
+        existing.recalledFacts = [RecalledFact(fact: "Ran the release train.")]
+        existing.buildNotes = "Keep the Tuya bullet."
+
+        let pasted = try XCTUnwrap(TailoringBrief.parse(from: """
+        { "fit_score": 8, "fit_confidence": "high", "candidate_story": "New story" }
+        """))
+        let merged = existing.merging(judgmentFrom: pasted)
+
+        // The judgment is taken…
+        XCTAssertEqual(merged.fitScore, 8)
+        XCTAssertEqual(merged.fitConfidence, "high")
+        XCTAssertEqual(merged.candidateStory, "New story")
+        // …and the candidate's own work survives.
+        XCTAssertEqual(merged.questions.count, 1)
+        XCTAssertEqual(merged.questions.first?.answer, "Yes, for two years.")
+        XCTAssertEqual(merged.recalledFacts.count, 1)
+        XCTAssertEqual(merged.buildNotes, "Keep the Tuya bullet.")
+
+        // A reply that says nothing about a field leaves it alone.
+        let quiet = try XCTUnwrap(TailoringBrief.parse(from: #"{"fit_score": 9}"#))
+        let after = merged.merging(judgmentFrom: quiet)
+        XCTAssertEqual(after.fitScore, 9)
+        XCTAssertEqual(after.candidateStory, "New story", "Not blanked by a reply that omits it")
+    }
+
+    func testTheReconcilerTranscribesTheJudgmentRatherThanMakingOne() {
+        let prompt = PromptBuilder.tailoringReconciliationPrompt(
+            pastedReply: "…", application: JobApplication(companyName: "Example", jobTitle: "Engineer"),
+            allExperiences: [], employments: []
+        )
+        XCTAssertTrue(prompt.contains("\"brief\""))
+        XCTAssertTrue(prompt.contains("\"fit_score\""))
+        XCTAssertTrue(prompt.contains("never score, rank, or assess the application yourself"))
+    }
+
+    /// Font size and margins are per application, so the same content can be a
+    /// dense two pages for one role and a roomy one for another.
+    func testPageLayoutReachesTheRenderedTemplate() {
+        let template = """
+        \\documentclass[{{APPLYKIT_FONT_SIZE}}]{resume}
+        \\geometry{top={{APPLYKIT_MARGIN}}, bottom={{APPLYKIT_MARGIN}}}
+        """
+        let rendered = ResumeRenderer.applyPageLayout(to: template, fontSizePt: 10, marginInches: 0.35)
+        XCTAssertTrue(rendered.contains("\\documentclass[10pt]{resume}"))
+        XCTAssertTrue(rendered.contains("top=0.35in"))
+        XCTAssertTrue(rendered.contains("bottom=0.35in"), "Every occurrence is replaced, not just the first")
+        XCTAssertFalse(rendered.contains("{{APPLYKIT"), "A leftover placeholder reaches the .tex and fails the build")
+
+        // The document class accepts only 10/11/12, so anything else is refused
+        // rather than passed through to break the build.
+        XCTAssertEqual(ResumePageLayout.clampFontSize(13), ResumePageLayout.defaultFontSizePt)
+        XCTAssertEqual(ResumePageLayout.clampFontSize(12), 12)
+        // Margins clamp to a printable range and snap to a step the stepper uses.
+        XCTAssertEqual(ResumePageLayout.clampMargin(0.05), 0.3)
+        XCTAssertEqual(ResumePageLayout.clampMargin(9), 1.0)
+        XCTAssertEqual(ResumePageLayout.marginText(1.0), "1in", "No trailing zeros")
+        XCTAssertEqual(ResumePageLayout.marginText(0.4), "0.4in")
+    }
+
+    func testPageLayoutRoundTripsThroughTheWorkspaceDTO() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        var application = JobApplication(companyName: "Example", jobTitle: "Engineer")
+        XCTAssertEqual(application.resumeFontSizePt, 10, "A new application starts at the default")
+        XCTAssertEqual(application.resumeMarginInches, 0.3)
+
+        application.resumeFontSizePt = 12
+        application.resumeMarginInches = 0.35
+        let dto = WorkspaceFiles.applicationDTO(from: application, documents: [], appFolder: folder)
+        XCTAssertEqual(dto.resumeFontSizePt, 12)
+        XCTAssertEqual(dto.resumeMarginInches, 0.35)
+
+        try application.jobDescription.write(to: folder.appendingPathComponent(WorkspaceFiles.jobDescriptionFile),
+                                             atomically: true, encoding: .utf8)
+        try application.notes.write(to: folder.appendingPathComponent(WorkspaceFiles.notesFile),
+                                    atomically: true, encoding: .utf8)
+        let restored = WorkspaceFiles.makeApplication(from: dto, appFolder: folder)
+        XCTAssertEqual(restored.resumeFontSizePt, 12)
+        XCTAssertEqual(restored.resumeMarginInches, 0.35)
+
+        // Applications saved before these were settable take the current
+        // defaults, so one setting governs everything until it's overridden.
+        var legacy = dto
+        legacy.resumeFontSizePt = nil
+        legacy.resumeMarginInches = nil
+        let old = WorkspaceFiles.makeApplication(from: legacy, appFolder: folder)
+        XCTAssertEqual(old.resumeFontSizePt, ResumePageLayout.defaultFontSizePt)
+        XCTAssertEqual(old.resumeMarginInches, ResumePageLayout.defaultMarginInches)
+    }
+
+    /// An empty section used to render as a bare heading: the caller filtered
+    /// empty strings, but the `rSection` wrapper was never empty, so the filter
+    /// never fired.
+    func testASectionWithNoContentIsLeftOutEntirely() {
+        let template = ResumeRenderer.sectionsPlaceholder
+        let rendered = ResumeRenderer.render(
+            template: template, variantSelections: [:],
+            selectedExperiences: [], selectedProjects: [], employments: [],
+            educationBlock: "", skillsBlock: "", summary: "",
+            sectionOrder: ResumeSectionKind.defaultOrder
+        ).rendered
+        XCTAssertFalse(rendered.contains("rSection"), "Nothing selected means no headings at all")
+
+        let withSummary = ResumeRenderer.render(
+            template: template, variantSelections: [:],
+            selectedExperiences: [], selectedProjects: [], employments: [],
+            educationBlock: "", skillsBlock: "", summary: "A real summary.",
+            sectionOrder: ResumeSectionKind.defaultOrder
+        ).rendered
+        XCTAssertTrue(withSummary.contains("\\begin{rSection}{Summary}"))
+        XCTAssertTrue(withSummary.contains("A real summary."))
+        XCTAssertFalse(withSummary.contains("{Skills}"), "Still no heading for the empty ones")
+        XCTAssertFalse(withSummary.contains("{Education}"))
+    }
+
+    /// "Omit the summary" is a decision the plan had no way to carry: an absent
+    /// `summary` means "leave unchanged", so a reply that argued for dropping it
+    /// silently kept the old one.
+    func testAPlanCanSayToRemoveTheSummary() throws {
+        // Present-but-empty is distinct from absent, which is what makes the
+        // instruction expressible at all.
+        let removing = try XCTUnwrap(TailoringPlan.parse(from: #"{"summary": ""}"#))
+        XCTAssertEqual(removing.summary, "")
+        XCTAssertFalse(removing.isEmpty, "A plan whose only instruction is 'drop the summary' is not an empty plan")
+
+        let silent = try XCTUnwrap(TailoringPlan.parse(from: #"{"skills_latex": "x"}"#))
+        XCTAssertNil(silent.summary, "A reply that doesn't discuss the summary leaves it alone")
+
+        // Both prompts have to name the convention, or it never gets used.
+        let build = PromptBuilder.tailoringBuildPrompt(
+            brief: try XCTUnwrap(TailoringBrief.parse(from: #"{"fit_score": 7}"#)),
+            application: JobApplication(companyName: "Example", jobTitle: "Engineer"),
+            allExperiences: [], employments: [], globalSkillsBlock: ""
+        )
+        XCTAssertTrue(build.contains("Dropping the summary"))
+        XCTAssertTrue(build.contains("return `\"summary\": \"\"`"))
+
+        let reconcile = PromptBuilder.tailoringReconciliationPrompt(
+            pastedReply: "Omit the summary.",
+            application: JobApplication(companyName: "Example", jobTitle: "Engineer"),
+            allExperiences: [], employments: []
+        )
+        XCTAssertTrue(reconcile.contains("omit the summary"))
+        XCTAssertTrue(reconcile.contains("Return `\"summary\": \"\"` for that"))
+    }
+
+    /// A PDF review done in ChatGPT lands in the same check the app runs —
+    /// same score, same findings, same applyable edits.
+    func testAPastedReviewBecomesTheSameCheck() throws {
+        let response = """
+        {
+          "fit_score": 7.5, "fit_confidence": "medium",
+          "verdict": "Ready after minor corrections",
+          "extraction_note": "Skills extract column-first.",
+          "checks": [
+            { "section": "Structure and ATS readability", "question": "Are roles reverse chronological?", "status": "pass" },
+            { "section": "Engineering signal", "question": "Is redundant content removed?", "status": "fail", "note": "Two evaluation bullets overlap" }
+          ],
+          "findings": [
+            { "severity": "fix", "text": "The Skills table loses label-to-value order", "fix": "Render it linearly" }
+          ],
+          "edits": { "summary": "Tightened summary." }
+        }
+        """
+        // Page count is measured from the file, never transcribed — the pasted
+        // reviewer may have been looking at a different build.
+        let review = try XCTUnwrap(TailoringReview.parse(from: response, pageCount: 2,
+                                                         documentPath: "/tmp/r.pdf", round: 2))
+        XCTAssertEqual(review.fitScore, 7.5)
+        XCTAssertEqual(review.scoreText, "7.5/10")
+        XCTAssertEqual(review.pageCount, 2)
+        XCTAssertEqual(review.round, 2)
+        XCTAssertEqual(review.failedChecks.count, 1)
+        XCTAssertEqual(review.findings.count, 1)
+        XCTAssertEqual(review.edits?.summary, "Tightened summary.", "Its edits apply like the in-app check's")
+    }
+
+    func testTheReviewReconcilerTranscribesRatherThanReviews() {
+        let prompt = PromptBuilder.reviewReconciliationPrompt(
+            pastedReview: "…", application: JobApplication(companyName: "eBay", jobTitle: "iOS Engineer"),
+            renderedExperiences: [], employments: []
+        )
+        XCTAssertTrue(prompt.contains("never judge the résumé yourself"))
+        XCTAssertTrue(prompt.contains("do not write the fix yourself"))
+        XCTAssertTrue(prompt.contains("Do not transcribe page count"))
+        XCTAssertTrue(prompt.contains("\"checks\""))
+        XCTAssertTrue(prompt.contains("\"edits\""))
+    }
+
     func testEverySignalExplainsItself() {
         for signal in TailoringSignal.allCases {
             let described = TailoringSignal.described(signal.rawValue)

@@ -23,10 +23,19 @@
 
 \documentclass[
     % a4paper, % Uncomment for A4 paper size (default is US letter)
-	11pt, % Default font size, can use 10pt, 11pt or 12pt
+	{{APPLYKIT_FONT_SIZE}}, % Body font size — set per application in ApplyKit (10pt, 11pt or 12pt)
 ]{resume} % Use the resume class
 
 \usepackage{mathpazo} % Set the font to Palatino
+
+% Page margins — set per application in ApplyKit. `resume.cls` loads geometry
+% with its own defaults; this re-applies it so the application's setting wins.
+\geometry{
+	top={{APPLYKIT_MARGIN}},
+	bottom={{APPLYKIT_MARGIN}},
+	left={{APPLYKIT_MARGIN}},
+	right={{APPLYKIT_MARGIN}},
+}
 
 \usepackage[colorlinks=true, linkcolor=blue, urlcolor=blue]{hyperref} % Word-like hyperlink style
 \usepackage[normalem]{ulem} % Underline package

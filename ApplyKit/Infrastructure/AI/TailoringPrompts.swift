@@ -161,6 +161,13 @@ extension PromptBuilder {
     weaken the résumé, break chronology, or overstate what the evidence supports, do the defensible thing and \
     say plainly in `uncertainties` what you did not do and why.
 
+    ## Dropping the summary (ApplyKit)
+
+    A summary earns its space or it doesn't. When the skills block and the opening bullets already establish the \
+    same identity, the honest call is to leave the résumé without one and give the space to experience — say so, \
+    and return `"summary": ""`. That removes the section entirely; an omitted field means "leave what's there", \
+    which would keep a summary you just argued against.
+
     ## What a rewrite's `reason` has to say (ApplyKit)
 
     The candidate reads the reason next to the before-and-after and decides whether to apply it, so it has to \
@@ -751,7 +758,7 @@ extension PromptBuilder {
         when you are actually changing it; an omitted field leaves the current value alone.
 
         {
-          "summary": "<tailored professional summary, plain prose>",
+          "summary": "<tailored professional summary, plain prose — or \"\" to leave the résumé without one>",
           "summary_rationale": [
             { "phrase": "<exact phrase from the summary>", "evidence": "<the accomplishment or confirmed fact behind it>", "signal": "<the posting need it serves>", "why_it_earns_space": "<hiring value and trade-off>" }
           ],
@@ -1065,6 +1072,29 @@ extension PromptBuilder {
     """
 
     /// The plan's shape, for the repair pass.
+    /// A pasted reply's shape, for the repair pass: the judgment nested under
+    /// `brief`, the edits at the top level.
+    static let pastedReplySchemaSummary = """
+    {
+      "brief": {
+        "fit_score": 7.5, "fit_confidence": "low | medium | high",
+        "recommended_priority": "High | Normal | Low | Skip",
+        "investment_tier": "Minimal | Standard | Deep", "investment_time": "...",
+        "effort_rationale": "...", "candidate_story": "...",
+        "strong_matches": [{ "claim": "...", "evidence": "...", "experience_id": "<uuid>" }],
+        "gaps": [{ "id": "<slug>", "kind": "genuine | presentation | unknown", "text": "...", "mitigation": "..." }],
+        "plan": { "summary_direction": "...", "skills_direction": "..." }
+      },
+      "summary": "...",
+      "skills_latex": "...",
+      "ordered_experience_ids": ["<uuid>"],
+      "ordered_project_ids": ["<uuid>"],
+      "replacements": [{ "experience_id": "<uuid>", "text": "...", "name": "...", "reason": "...", "signal": "..." }],
+      "drops": [{ "experience_id": "<uuid>", "reason": "..." }],
+      "readiness": "...", "uncertainties": ["..."]
+    }
+    """
+
     static let planSchemaSummary = """
     {
       "summary": "...",

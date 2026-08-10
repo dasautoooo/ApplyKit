@@ -43,6 +43,11 @@ struct JobApplication: Identifiable, Codable, Hashable {
     var sectionOrderText: String
     var skillsBlockText: String
     var summaryText: String
+    /// Body font size for the rendered résumé, in points. The document class
+    /// only accepts 10, 11 or 12 — see `ResumePageLayout`.
+    var resumeFontSizePt: Int
+    /// Page margin in inches, applied on all four sides.
+    var resumeMarginInches: Double
     var archivedAt: Date?
     var createdAt: Date
     var updatedAt: Date
@@ -90,6 +95,8 @@ struct JobApplication: Identifiable, Codable, Hashable {
         self.sectionOrderText = ""
         self.skillsBlockText = ""
         self.summaryText = ""
+        self.resumeFontSizePt = ResumePageLayout.defaultFontSizePt
+        self.resumeMarginInches = ResumePageLayout.defaultMarginInches
         self.archivedAt = nil
         self.createdAt = Date()
         self.updatedAt = Date()

@@ -213,7 +213,25 @@ extension ApplicationEditorView {
         // you click it reads as work lost, and takes its "Applied" mark with it.
         // `appliedBefore` is what makes the diff still show what it replaced.
         let summaryID = idPrefix + "summary"
-        if let summary = plan.summary?.trimmed, !summary.isEmpty,
+        // A present-but-empty summary is "remove it", not "nothing to say" — a
+        // tailoring reply that decides the résumé is stronger without a summary
+        // has no other way to express that, and an absent field means "leave
+        // unchanged".
+        if let proposed = plan.summary, proposed.trimmed.isEmpty,
+           applied(summaryID) || !application.summaryText.trimmed.isEmpty {
+            let previous = appliedBefore[summaryID] ?? application.summaryText
+            changes.append(TailoringChange(
+                id: summaryID,
+                title: "Remove the professional summary",
+                detail: "The plan gives the space to experience instead. The Summary section is left out of the résumé entirely.",
+                before: previous.trimmed.isEmpty ? nil : previous,
+                after: nil,
+                blockedReason: nil,
+                action: .summary(""),
+                applied: applied(summaryID),
+                source: source
+            ))
+        } else if let summary = plan.summary?.trimmed, !summary.isEmpty,
            applied(summaryID) || summary != application.summaryText.trimmed {
             var detail = "Replace the summary with the tailored version."
             if let omitted = plan.deliberatelyOmitted?.trimmed, !omitted.isEmpty {

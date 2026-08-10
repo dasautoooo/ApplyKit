@@ -181,6 +181,32 @@ extension ApplicationEditorView {
         await tailoringRunner.reviewRenderedResume(applicationID: application.id)
     }
 
+    var isReviewingResume: Bool { tailoringRunner.isRunning(.review, for: application.id) }
+
+    /// Reads a review done in ChatGPT into the same check the app runs.
+    func reconcilePastedReview(_ text: String) async {
+        await tailoringRunner.reconcileReview(applicationID: application.id, pastedReview: text)
+    }
+
+    /// The text the rendered PDF actually extracts — what an ATS would see, and
+    /// what a reviewer needs to judge the artifact rather than the plan.
+    func copyRenderedResumeText() {
+        guard let resume = documents.first(where: { $0.kindRaw == GeneratedDocumentKind.resume.rawValue }),
+              let rendered = ResumePDFInspector.inspect(path: resume.pdfPath) else {
+            activityMonitor.fail("Generate the résumé PDF first.")
+            return
+        }
+        let header = """
+        Résumé for \(application.companyName) — \(application.jobTitle)
+        \(rendered.pageCount) page\(rendered.pageCount == 1 ? "" : "s"), as extracted from the rendered PDF.
+
+        """
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(header + rendered.text, forType: .string)
+        activityMonitor.succeed("Copied the rendered résumé's text. Paste it into ChatGPT for review.")
+    }
+
     // MARK: - Runs
     //
     // All four hand off to `TailoringRunner`, which owns them for as long as they

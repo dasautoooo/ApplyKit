@@ -258,6 +258,8 @@ extension ApplicationEditorView {
             application.sectionOrderText,
             application.skillsBlockText,
             application.summaryText,
+            String(application.resumeFontSizePt),
+            String(application.resumeMarginInches),
             application.tailoringPlanData,
             application.tailoringBriefData,
             application.tailoringReviewData,
