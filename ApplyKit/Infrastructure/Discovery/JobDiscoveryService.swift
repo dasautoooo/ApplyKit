@@ -58,7 +58,7 @@ final class JobDiscoveryService {
         let fetched = await fetchAll(boards, onProgress: onProgress)
 
         for (index, board) in boards.enumerated() {
-            switch fetched[index] {
+            switch fetched[board.id] {
             case .failure(let message):
                 errors.append("\(board.displayName): \(message)")
             case .success(let postings):
@@ -94,29 +94,31 @@ final class JobDiscoveryService {
     }
 
     /// Runs the listing calls with a fixed number in flight, refilling as each
-    /// finishes. Results come back keyed by the board's index so the caller can
-    /// process them in the original order.
+    /// finishes. Each task reports the id of the board *it* polled, and results
+    /// are keyed by that id — never by position. Attribution therefore travels
+    /// with the fetch itself, so no scheduling order, refill step, or concurrent
+    /// refresh can file one company's postings under another's board.
     private func fetchAll(_ boards: [TrackedBoard],
-                          onProgress: (@MainActor (Int, Int) -> Void)?) async -> [Int: Fetch] {
+                          onProgress: (@MainActor (Int, Int) -> Void)?) async -> [UUID: Fetch] {
         guard !boards.isEmpty else { return [:] }
-        var results: [Int: Fetch] = [:]
+        var results: [UUID: Fetch] = [:]
         var completed = 0
 
-        await withTaskGroup(of: (Int, Fetch).self) { group in
+        await withTaskGroup(of: (UUID, Fetch).self) { group in
             var next = 0
             func addTask(_ index: Int) {
                 let board = boards[index]
                 group.addTask {
-                    do { return (index, .success(try await JobBoardProviders.listJobs(for: board))) }
-                    catch { return (index, .failure(error.localizedDescription)) }
+                    do { return (board.id, .success(try await JobBoardProviders.listJobs(for: board))) }
+                    catch { return (board.id, .failure(error.localizedDescription)) }
                 }
             }
             while next < min(Self.maxConcurrentBoards, boards.count) {
                 addTask(next)
                 next += 1
             }
-            while let (index, outcome) = await group.next() {
-                results[index] = outcome
+            while let (boardID, outcome) = await group.next() {
+                results[boardID] = outcome
                 completed += 1
                 if let onProgress {
                     let done = completed
@@ -168,6 +170,51 @@ final class JobDiscoveryService {
             if didChange { changed += 1 }
         }
         return changed
+    }
+
+    struct AttributionRepair {
+        /// Rows moved to the board their posting URL actually belongs to.
+        var reassigned = 0
+        /// Reassigned `new` rows the correct board's filters reject — a posting
+        /// filed under the wrong company was also filtered by the wrong company's
+        /// keywords, so it may never have belonged in the inbox at all.
+        var removedIDs: Set<UUID> = []
+        var didChange: Bool { reassigned > 0 }
+    }
+
+    /// Refiles postings sitting under the wrong company.
+    ///
+    /// A posting's URL identifies its board on its own — `lifeattiktok.com` is
+    /// TikTok's whatever row it's attached to — so any row whose URL resolves to a
+    /// *different* tracked board than the one it's filed under is misattributed,
+    /// and can be moved back without guessing. Rows whose URL no provider claims
+    /// (vanity careers domains like `instacart.careers`) are left alone: no match
+    /// is not evidence of a wrong match.
+    ///
+    /// Reassigned `new` rows are then re-tested against their real board's
+    /// filters, since they were admitted under someone else's.
+    static func repairAttribution(in jobs: inout [DiscoveredJob], boards: [TrackedBoard]) -> AttributionRepair {
+        var repair = AttributionRepair()
+        guard !boards.isEmpty else { return repair }
+        let boardsByKey = Dictionary(boards.map { ($0.trackingKey, $0) }, uniquingKeysWith: { first, _ in first })
+
+        for index in jobs.indices {
+            guard let url = URL(string: jobs[index].url),
+                  let detected = JobBoardProviders.detect(url: url),
+                  let owner = boardsByKey[detected.trackingKey],
+                  owner.id != jobs[index].boardID else { continue }
+            jobs[index].boardID = owner.id
+            jobs[index].companyName = owner.displayName
+            repair.reassigned += 1
+
+            guard jobs[index].state == .new else { continue }
+            let posting = DiscoveredPosting(externalID: jobs[index].externalID, title: jobs[index].title,
+                                            location: jobs[index].location, url: jobs[index].url,
+                                            postedAt: jobs[index].postedAt)
+            if !passesFilters(posting, board: owner) { repair.removedIDs.insert(jobs[index].id) }
+        }
+        jobs.removeAll { repair.removedIDs.contains($0.id) }
+        return repair
     }
 
     /// Postings still marked `new` on a successfully-polled board that no longer

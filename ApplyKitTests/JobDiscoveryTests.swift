@@ -615,6 +615,73 @@ final class JobDiscoveryTests: XCTestCase {
         XCTAssertTrue(outcome.boards.isEmpty)
     }
 
+    /// A posting's URL names its board on its own, so a row filed under some other
+    /// company is repairable without guesswork — and once moved, it has to face the
+    /// filters of the board it actually belongs to, not the ones that let it in.
+    func testMisattributedPostingsAreRefiledUnderTheirRealBoard() {
+        let tiktok = TrackedBoard(kindRaw: "tiktok", slug: "tiktok", companyName: "TikTok",
+                                  locationKeywords: ["Toronto", "Canada"])
+        let other = TrackedBoard(kindRaw: "greenhouse", slug: "acme", companyName: "Acme")
+        var jobs = [
+            // Filed under Acme, but plainly a TikTok posting; Singapore fails
+            // TikTok's location filter, which never got to see it.
+            DiscoveredJob(boardID: other.id, externalID: "1", dedupeKey: "k1", title: "Backend Engineer",
+                          companyName: "Acme", location: "Singapore",
+                          url: "https://lifeattiktok.com/search/1"),
+            // Same mistake, but this one survives TikTok's own filters.
+            DiscoveredJob(boardID: other.id, externalID: "2", dedupeKey: "k2", title: "Backend Engineer",
+                          companyName: "Acme", location: "Toronto, Ontario",
+                          url: "https://lifeattiktok.com/search/2"),
+            // Correctly filed: left exactly as it is.
+            DiscoveredJob(boardID: other.id, externalID: "3", dedupeKey: "k3", title: "Data Engineer",
+                          companyName: "Acme", location: "Remote",
+                          url: "https://job-boards.greenhouse.io/acme/jobs/3")
+        ]
+
+        let repair = JobDiscoveryService.repairAttribution(in: &jobs, boards: [tiktok, other])
+
+        XCTAssertEqual(repair.reassigned, 2)
+        XCTAssertEqual(repair.removedIDs.count, 1)
+        XCTAssertEqual(jobs.count, 2, "The Singapore row never passed TikTok's filters")
+        let moved = jobs.first { $0.externalID == "2" }
+        XCTAssertEqual(moved?.boardID, tiktok.id)
+        XCTAssertEqual(moved?.companyName, "TikTok")
+        let untouched = jobs.first { $0.externalID == "3" }
+        XCTAssertEqual(untouched?.boardID, other.id)
+        XCTAssertEqual(untouched?.companyName, "Acme")
+    }
+
+    /// Vanity careers domains (`instacart.careers`, `stripe.com`) belong to boards
+    /// no provider can name from the URL alone. Not knowing the owner is not the
+    /// same as knowing it's wrong, so those rows stay put.
+    func testRepairLeavesRowsWhoseURLNoProviderClaims() {
+        let board = TrackedBoard(kindRaw: "greenhouse", slug: "instacart", companyName: "Instacart")
+        let stranger = TrackedBoard(kindRaw: "lever", slug: "waabi", companyName: "Waabi")
+        var jobs = [DiscoveredJob(boardID: board.id, externalID: "1", dedupeKey: "k1", title: "Engineer",
+                                  companyName: "Instacart", location: "Toronto",
+                                  url: "https://instacart.careers/job/?id=1")]
+
+        let repair = JobDiscoveryService.repairAttribution(in: &jobs, boards: [board, stranger])
+
+        XCTAssertEqual(repair.reassigned, 0)
+        XCTAssertFalse(repair.didChange)
+        XCTAssertEqual(jobs.first?.boardID, board.id)
+    }
+
+    /// A posting whose real board isn't tracked at all has nowhere to go, and
+    /// removing it would delete a row the user can still act on.
+    func testRepairKeepsRowsWhoseRealBoardIsNotTracked() {
+        let board = TrackedBoard(kindRaw: "greenhouse", slug: "acme", companyName: "Acme")
+        var jobs = [DiscoveredJob(boardID: board.id, externalID: "1", dedupeKey: "k1", title: "Engineer",
+                                  companyName: "Acme", location: "Singapore",
+                                  url: "https://lifeattiktok.com/search/1")]
+
+        let repair = JobDiscoveryService.repairAttribution(in: &jobs, boards: [board])
+
+        XCTAssertEqual(repair.reassigned, 0)
+        XCTAssertEqual(jobs.count, 1)
+    }
+
     func testFilterDropsCatchAllTalentPoolPostings() {
         XCTAssertTrue(JobDiscoveryService.isCatchAllPosting(title: "Don't see what you're looking for?"))
         XCTAssertTrue(JobDiscoveryService.isCatchAllPosting(title: "Interested in an internship?"))

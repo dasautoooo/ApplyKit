@@ -26,7 +26,12 @@ enum DiscoveryCoordinator {
         // the current filter rules existed.
         let prunedCount = store.discoveredJobs.count
         store.discoveredJobs.removeAll { $0.state == .new && JobDiscoveryService.isCatchAllPosting(title: $0.title) }
-        if store.discoveredJobs.count != prunedCount {
+        // Refile any postings sitting under the wrong company. Always the whole
+        // inbox, not just `only:` — a misfiled row names a board that had nothing
+        // to do with fetching it, so it can't be found from the polled set.
+        let repair = JobDiscoveryService.repairAttribution(in: &store.discoveredJobs,
+                                                           boards: store.trackedBoards)
+        if store.discoveredJobs.count != prunedCount || repair.didChange {
             try? WorkspaceSyncService.persistDiscoveredJobs(store.discoveredJobs, settings: settings)
         }
 
@@ -84,6 +89,11 @@ enum DiscoveryCoordinator {
             var message = count == 0 ? "No new postings found." : "Found \(count) new posting\(count == 1 ? "" : "s")."
             if !closedIDs.isEmpty {
                 message += " \(closedIDs.count) no longer listed."
+            }
+            if repair.didChange {
+                message += " \(repair.reassigned) posting\(repair.reassigned == 1 ? "" : "s") moved to the right company"
+                message += repair.removedIDs.isEmpty
+                    ? "." : " (\(repair.removedIDs.count) dropped by its filters)."
             }
             // With many boards a few failures are normal; say so rather than
             // reporting a clean run.
