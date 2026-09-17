@@ -86,7 +86,15 @@ final class InspectorSplitViewController: NSSplitViewController {
         contentItem.minimumThickness = 500
         contentItem.holdingPriority = .defaultLow
 
-        inspectorItem = NSSplitViewItem(inspectorWithViewController: inspectorHost)
+        // A plain item, not `inspectorWithViewController:`. An inspector item asks
+        // AppKit for its own titlebar section, and this controller is nested in
+        // the window's content rather than being its root: the titlebar
+        // background lands a toolbar's height too low, and on macOS 26 it brings
+        // an NSScrollPocket that blurs the top of the pane. That reads as a
+        // second, taller navigation bar under the real one. Collapsing, width,
+        // and the divider are all driven from here anyway.
+        inspectorItem = NSSplitViewItem(viewController: inspectorHost)
+        inspectorItem.canCollapseFromWindowResize = false
         inspectorItem.minimumThickness = inspectorMinWidth
         inspectorItem.maximumThickness = inspectorMaxWidth
         inspectorItem.canCollapse = true
