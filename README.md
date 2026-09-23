@@ -1,100 +1,186 @@
 # ApplyKit
 
-Native macOS app for job application management. Tracks applications through the interview pipeline, maintains a reusable experience bullet bank, and generates tailored LaTeX resumes and cover letters. AI actions (JD analysis, experience recommendations, cover letter drafting) run via Claude Code or Codex CLI as subprocesses. All data persists as YAML and Markdown files in a local workspace directory.
+Native macOS app (SwiftUI) for job application management. It tracks applications through the interview pipeline, polls company job boards for new postings, keeps a reusable bank of experience bullets, and renders per-application LaTeX resumes and cover letters. Resume tailoring runs in one of two ways: in an external chat (ChatGPT, Claude), whose JSON edit plan ApplyKit validates and applies deterministically, or through the Claude Code or Codex CLI run as a subprocess. All data is plain YAML, Markdown, and JSON in a local workspace directory.
 
 ## Sections
 
-**Applications** — Create and manage job applications. Each application stores the job description, status, priority, notes, selected experience bullets, and generated documents. From the application editor you can:
-- Import a public job-posting URL, review extracted role details, and create the application from the best-matching master resume
-- Run a JD analysis (sends your full experience bank + JD to the AI backend, returns a structured fit assessment)
-- Get AI-recommended experience bullets (AI picks the most relevant from your bank based on the JD)
-- Refine individual bullets against the JD
-- Generate a resume (LaTeX → PDF via your configured build command)
-- Draft a cover letter (AI generates structured JSON → injected into your LaTeX template → PDF)
+The sidebar has five sections.
 
-Application status pipeline: `Saved → Interested → Preparing → Applied → Referral Requested → Recruiter Screen → Technical Interview → Final Interview → Offer / Rejected / Ghosted / Withdrawn`
+**Applications**: one record per job application. The editor holds:
+- Role details, status, priority, and the job description. Status changes, archive/restore, and manual notes are recorded on a per-application timeline.
+- Resume content: selected bullets and variants, their order, section order, summary, skills block, role-description overrides, and page layout (font size, margins). See [Resume content model](#resume-content-model).
+- Documents: generate the resume (LaTeX → PDF) and draft a cover letter.
+- The Resume Tailor (see [Resume Tailor](#resume-tailor)).
+- Applications can be created from a job-posting URL. ApplyKit reads the posting through the ATS API when it recognizes the host, or renders the page in an offscreen `WKWebView`, extracts the role details with the AI backend, and starts the resume from the best-matching master resume. Applications can also be duplicated and archived.
 
-**Employments** — Company and role records. Used to order experience entries on the resume and to provide employment history context to AI prompts.
+Status pipeline: `Saved → Interested → Preparing → Applied → Referral Requested → Recruiter Screen → Technical Interview → Final Interview → Offer / Rejected / Ghosted / Withdrawn`
 
-**Experience Bank** — Library of experience bullets, one per accomplishment. Each bullet can have multiple variants (alternate phrasings), which you select per application. Bullets are tagged with skills, role category, impact level, claim confidence, and sensitivity.
+**Discover**: tracks company job boards and collects new postings into an inbox.
+- Providers: Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Workable, Recruitee, BambooHR, Breezy, JazzHR, Personio, Teamtailor, iCIMS, SuccessFactors, Eightfold, Phenom, Avature, Cornerstone, and first-party boards for Amazon, Apple, Google, Meta, Tesla, Uber, and ByteDance/TikTok. A few are browser-backed (`WKWebView`).
+- Boards can be found by company name (bundled `known-boards.tsv` plus slug probing), added in batches, and searched.
+- Polling makes no AI calls. It runs on launch and on Refresh, applies per-board keyword filters, dedupes across boards, and notices postings that have disappeared. The AI runs only when a posting is imported as an application.
+
+**Master Resumes**: named resume presets (for example, "iOS Engineer") carrying the same content fields as an application. A new application copies one wholesale; a master resume can also be previewed as a PDF on its own.
+
+**Employments**: company and role records (dates, location, display order, default role description). Work bullets are grouped and ordered under them on the resume.
+
+**Experience Bank**: one bullet per accomplishment. A bullet has:
+- text and any number of named variants (alternate wordings);
+- metadata: type (Work, Project, Open Source, …), role category, impact level, claim level, sensitivity, skills;
+- an optional owning application, for bullets or variants that should stay private to one application.
+
+A project is one bullet whose text may hold several points, each on its own line starting with `\item`.
+
+## Resume Tailor
+
+Opened from the application editor. Both routes produce the same list of reviewable changes. Each change is applied or reverted individually or with **Apply All**; every applied change stores a snapshot, and revert restores it. A rewrite never modifies a bullet's source text: it is stored as a new variant, or reuses an identical existing one, and that variant is selected for this application.
+
+### External chat (default)
+
+1. **Copy Context** puts on the clipboard the application details, the job description, the resume with every bullet, project, and employer tagged by ID, the unselected bullets, and the output contract for the Resume Edit Plan v1.0.
+2. The chat replies with its reasoning and the full tailored resume as text, then one JSON edit plan. **Paste Reply & Import** (⇧⌘V) reads the reply from the clipboard.
+3. `ResumeEditPlanImporter` validates the plan with no AI call:
+   - it extracts exactly one object carrying `schema_version`;
+   - it checks structure and conditional fields, reporting errors as JSON Pointer paths;
+   - it resolves every ID, requires every item currently on the resume to be decided (`keep` / `rewrite` / `drop`), checks per-employer ordering, checks that `section_order` matches the sections that will render, and rejects structural LaTeX.
+   Any error blocks the import and is listed under the paste box; warnings (a generic variant title, an overlong bullet) do not.
+4. The validated plan is adapted into the existing `TailoringPlan`, which feeds the change list.
+5. Optionally, generate the PDF, copy its extracted text, and paste the chat's review back. Reading that review does use the in-app AI backend.
+
+The plan covers the fit score, section order, the summary (keep/replace/drop), a three-row Skills table at `0.74\textwidth`, keep/rewrite/drop for each bullet with per-employer `order`, and role descriptions (keep/rewrite/hide, with an optional position among the employer's bullets). The schema and producer rules live in `ResumeEditPlanPrompt.swift`; validation and error codes in `ResumeEditPlanImporter.swift`.
+
+### In-app AI
+
+Runs the Claude Code or Codex CLI:
+1. **Fit brief**: fit score, priority, investment tier, candidate story, strong matches, gaps, and questions. With research enabled, it also reads the live posting and public resume guidance.
+2. **Clarify**: answers to the questions become recorded facts; capped at five rounds.
+3. **Build**: turns the brief into a `TailoringPlan`.
+4. **PDF check**: reads the rendered PDF, including its real page count and extracted text, and can propose further edits.
+
+The rules are ported from a standalone `resume-tailor` skill and live in `TailoringPrompts.swift` / `ResumeTailorSkill.swift`.
+
+## Resume content model
+
+`JobApplication` and `MasterResume` share the `ResumeContentModel` protocol. Resume content is stored as flat string fields in `application.yml`:
+
+| Field | Meaning |
+|---|---|
+| `selected_experience_ids`, `selected_project_ids` | Selected bullets |
+| `selected_variant_ids` | Bullet ID → variant ID, per application |
+| `experience_order` | One flat ordered list of bullet IDs. Employment IDs in it mark where that employer's role-description line sits; if absent, the line comes first. |
+| `section_order` | Summary, Education, Experience, Selected Projects, Skills |
+| `summary` | Empty string omits the section |
+| `skills_block` | Raw LaTeX override of the profile's skills block |
+| `role_descriptions`, `hidden_role_descriptions` | Per-employer role-line wording and visibility |
+| `resume_font_size_pt`, `resume_margin_inches` | Page layout |
+
+## Documents
+
+- `ResumeRenderer` fills `{{APPLYKIT_SECTIONS}}`, the name/address placeholders, and the font-size and margin placeholders in the resume template (`Templates/general_resume.tex` with `resume.cls`, or your own template).
+- Bullets and summary go through `smartEscapeLatex`, which escapes bare `& % $ # _ ~ ^` but leaves existing commands and hand-escaped characters alone. Metadata (company, role, dates) is fully escaped.
+- The PDF is built with the configured command (default `latexmk -pdf -interaction=nonstopmode -synctex=1`) in a login shell. `ResumePDFInspector` reads page count and text back with PDFKit.
+- Cover letters: the AI backend returns structured JSON, which is rendered into `cover_letter.tex`.
 
 ## Getting Started
 
 ### Requirements
 
-- macOS 15+
-- Xcode 16+ to build from source
-- Optional: LaTeX distribution (e.g. [MacTeX](https://www.tug.org/mactex/)) for PDF generation
-- Optional: [Claude Code](https://claude.ai/code) CLI or [Codex CLI](https://github.com/openai/codex) for AI features
+- macOS 26
+- Xcode 26 to build from source
+- Optional: a LaTeX distribution (e.g. [MacTeX](https://www.tug.org/mactex/)) for PDF generation
+- Optional: [Claude Code](https://claude.ai/code) CLI or [Codex CLI](https://github.com/openai/codex) for AI features. The external-chat tailoring route and discovery polling work without either.
 
-### Build
+### Build and test
 
 ```bash
-open ApplyKit.xcodeproj
-# Cmd+R to run
+open ApplyKit.xcodeproj   # ⌘R to run
+
+xcodebuild -project ApplyKit.xcodeproj -scheme ApplyKit -destination 'platform=macOS' test
 ```
 
-On first launch, a setup sheet asks for a workspace directory. ApplyKit initializes subdirectories there and writes a settings file.
+On first launch ApplyKit asks for a workspace directory and initializes it.
 
-### Settings
+### Settings (⌘,)
 
-Configure in **Settings** (⌘,):
-- Workspace directory path
-- Claude Code CLI path (for AI features)
-- Codex CLI path (alternative AI backend)
-- LaTeX build command (default: `latexmk -pdf`)
-- Resume template `.tex` path
-- Cover letter template `.tex` path
-- Profile (name, contact info, education block, skills — injected into generated documents)
+- **Workspace:** directory path.
+- **AI:** Claude Code and Codex CLI paths (with auto-detect), preferred backend, and per-backend model and effort overrides. If the preferred CLI isn't set, ApplyKit falls back to the other.
+- **Resume Tailor:** whether the fit brief reads the live posting and resume guidance.
+- **Build:** LaTeX build command and external editor path.
+- **Document Templates:** resume and cover-letter `.tex` paths.
+- **Profile:** name, contact and online links, education block, and the default skills block.
 
 ## Workspace Layout
 
 ```
-<Your Workspace>/
-├── Applications/       # One YAML file per application
-├── Employments/        # Company and role records
-├── Experience Bank/    # Bullet points and variants
-├── Prompts/            # AI run history (prompt + response files)
-├── Documents/          # Generated .tex and .pdf files
-└── Settings/           # App config and profile
+<Workspace>/
+├── applykit.yml                  # workspace manifest
+├── settings.yml
+├── profile.yml                   # identity, contact, education and skills blocks
+├── activity-log.yml
+├── applications/
+│   └── <company>_<title>/
+│       ├── application.yml       # fields + resume content (see above)
+│       ├── job-description.md
+│       ├── notes.md
+│       ├── timeline.yml
+│       ├── tailoring-brief.json      # Stage 1 brief, questions, answers, facts
+│       ├── tailoring-suggestion.json # current plan, pasted reply, applied/revert state
+│       ├── tailoring-review.json     # latest PDF check
+│       ├── curated-suggestions.json
+│       ├── resume/                   # .tex, resume.cls, PDF, manifest.yml
+│       ├── cover-letter/
+│       ├── prompts/                  # prompts sent to the AI backend
+│       └── ai-responses/             # raw responses, including unparseable ones
+├── experience-bank/
+│   ├── index.yml
+│   ├── <source>/<bullet>.yml     # bullet + variants
+│   └── employments/<company>--<role>.yml
+├── master-resumes/<name>.yml
+├── discovery/
+│   ├── boards.yml                # tracked boards and filters
+│   └── jobs.yml                  # discovered postings
+├── prompts/                      # workspace-level AI runs
+└── ai-responses/
 ```
 
-All files are plain text; you can read, edit, or version-control them independently of the app.
-
-ApplyKit uses native ports of selected ATS endpoint mappings from
-[`ats-scrapers`](https://github.com/kalil0321/ats-scrapers). See
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for attribution.
-
-## Customization
-
-**Templates** — Provide your own `.tex` files for resume and cover letter. At generation time ApplyKit injects profile fields, education/skills blocks, and selected experience bullets. Set template paths in Settings.
-
-**Experience bullet metadata** — Each bullet has fields for role category (General SE, Backend, AI Tooling, Mobile/iOS, etc.), impact level, claim confidence (`Safe` / `Contextual` / `Don't emphasize`), and sensitivity (`Public` / `Internal-safe` / `Sensitive`). Populate these to improve AI recommendation quality and to filter bullets when selecting for an application.
-
-**AI backend** — Set Claude Code or Codex CLI path in Settings. The app uses whichever is configured. All prompts are built internally and are not user-editable; raw prompt and response files are saved to `<Workspace>/Prompts/` per run for inspection.
+Every file is plain text and can be read, edited, or version-controlled outside the app. Edits made in the app are written back as you go. The workspace is loaded into memory on launch.
 
 ## Architecture
 
 ```
 ApplyKit/
-├── App/               # Entry point, root navigation, activity monitor
-├── Domain/            # Data models
-├── Features/          # SwiftUI views per section
-├── Infrastructure/    # Workspace I/O, subprocess runner, LaTeX renderer, prompt builder
-└── DesignSystem/      # Shared UI components
+├── App/               # entry point, sidebar, activity monitor, settings window
+├── Domain/            # Codable value types: applications, tailoring plan/brief/review,
+│                      # resume edit plan + importer, experience bank, discovery, settings
+├── Features/          # SwiftUI views per section (application editor is split by concern)
+├── Infrastructure/
+│   ├── AI/            # CLI backends, prompt builders, TailoringRunner, edit plan prompt
+│   ├── Discovery/     # ATS board resolver, providers, polling service
+│   ├── Process/       # subprocess runner, LaTeX build
+│   ├── Rendering/     # resume/cover letter renderers, PDF inspector
+│   └── Workspace/     # YAML DTOs, file layout, load/sync
+├── DesignSystem/      # shared UI components
+├── Resources/         # known-boards.tsv
+└── Templates/         # default resume/cover letter templates, resume.cls
 ```
 
-**State:** `@Observable` (Swift 5.9) throughout — no Combine, no separate view model classes.  
-**Persistence:** YAML + Markdown via [Yams](https://github.com/jpsim/Yams) (Swift Package Manager).  
-**Sandbox:** Security-scoped bookmarks retain workspace access across launches.
+- **State:** a single `@Observable` `AppDataStore` holds the workspace in memory. Views read and write it directly; there is no Combine and no separate view-model layer. `TailoringRunner` owns long AI runs so they survive leaving or closing an editor, and several applications can tailor at once.
+- **Persistence:** snake_case YAML DTOs via [Yams](https://github.com/jpsim/Yams), mapped to and from domain types in `WorkspaceFiles`. New fields are optional in the DTOs and get defaults on load; there is no migration framework.
+- **AI:** each run is a one-shot CLI subprocess. Structured replies are parsed from JSON, with one repair call when parsing fails. An empty or unparseable reply is saved to `ai-responses/` and surfaced as an error.
+- **Sandbox:** not sandboxed, because it spawns CLI subprocesses and LaTeX. The workspace path and a bookmark are kept in `UserDefaults`.
+- **Tests:** XCTest (`ApplyKitTests/`), covering the tailoring plan and edit plan import, rendering, DTO round-trips, job import, discovery, and the timeline.
 
 ## Contributing
 
 PRs are welcome for bug fixes and focused improvements.
 
-- No new external dependencies without discussion
-- Match existing patterns: `@Observable` state, one YAML file per entity in the workspace
-- Test against a real workspace directory — there are no automated tests
+- No new external dependencies without discussion.
+- Match existing patterns: `@Observable` state, plain Codable domain types, and one file per entity in the workspace.
+- Add or update XCTest coverage for domain and parsing changes, and check UI changes against a real workspace.
+
+## Third-party notices
+
+ApplyKit includes native ports of selected ATS endpoint mappings from [`ats-scrapers`](https://github.com/kalil0321/ats-scrapers). See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for attribution.
 
 ## License
 

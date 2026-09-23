@@ -731,100 +731,6 @@ final class ResumeTailorTests: XCTestCase {
         XCTAssertTrue(BulletOpening.opensWithOutcome("  Reduced p99 by 30%."), "Leading space and case ignored")
     }
 
-    /// "Signal improved: Technical depth" names a category, not a reason. The
-    /// meaning is fixed text — what a signal does for a reader doesn't vary by
-    /// application, so there's nothing gained by asking the model each time.
-    /// The paste route extracted only the edits, so a ChatGPT reply's score,
-    /// priority, story, matches and gaps were read and thrown away — the brief
-    /// panel stayed empty for anyone working mostly in ChatGPT.
-    func testAPastedReplyCarriesItsJudgmentNotJustItsEdits() throws {
-        let response = """
-        Here's the tailoring.
-
-        ```json
-        {
-          "brief": {
-            "fit_score": 8, "fit_confidence": "high", "recommended_priority": "High",
-            "investment_tier": "Deep", "investment_time": "45–60 minutes",
-            "effort_rationale": "Strong match; deeper tailoring is worth it.",
-            "candidate_story": "Platform-leaning iOS engineer",
-            "strong_matches": [{ "claim": "Owns release engineering", "evidence": "Ran the release train" }],
-            "gaps": [{ "id": "a11y", "kind": "genuine", "text": "No accessibility ownership" }],
-            "plan": { "summary_direction": "Lead with release ownership" }
-          },
-          "summary": "Tailored summary.",
-          "replacements": [
-            { "experience_id": "\(UUID().uuidString)", "text": "Rewritten bullet.", "reason": "Sharper." }
-          ]
-        }
-        ```
-        """
-        let reply = try XCTUnwrap(TailoringPastedReply.parse(from: response))
-        let judged = try XCTUnwrap(reply.brief)
-        XCTAssertEqual(judged.fitScore, 8)
-        XCTAssertEqual(judged.recommendedPriority, "High")
-        XCTAssertEqual(judged.investmentTier, "Deep")
-        XCTAssertEqual(judged.candidateStory, "Platform-leaning iOS engineer")
-        XCTAssertEqual(judged.strongMatches.count, 1)
-        XCTAssertEqual(judged.gaps.first?.id, "a11y")
-        // …and the edits still come through.
-        XCTAssertEqual(reply.plan?.summary, "Tailored summary.")
-        XCTAssertEqual(reply.plan?.replacements?.count, 1)
-    }
-
-    /// A reply in the older shape — edits only, no judgment — must still apply.
-    func testAReplyWithNoJudgmentStillYieldsItsEdits() throws {
-        let reply = try XCTUnwrap(TailoringPastedReply.parse(from: #"{"summary": "Just the edits."}"#))
-        XCTAssertNil(reply.brief)
-        XCTAssertEqual(reply.plan?.summary, "Just the edits.")
-        // And a reply with nothing usable is rejected rather than half-applied.
-        XCTAssertNil(TailoringPastedReply.parse(from: #"{"unrelated": true}"#))
-    }
-
-    /// Pasting brings a judgment; it must not cost the candidate the work they
-    /// did in the app. Questions, answers, facts and build notes are theirs.
-    func testPastingAJudgmentKeepsTheAnswersAlreadyGiven() throws {
-        var existing = try XCTUnwrap(TailoringBrief.parse(from: """
-        { "fit_score": 6, "candidate_story": "Old story",
-          "questions": [{ "kind": "recall", "question": "Have you owned a release?" }] }
-        """))
-        let questionID = try XCTUnwrap(existing.questions.first?.id)
-        existing.setAnswer("Yes, for two years.", for: questionID)
-        existing.recalledFacts = [RecalledFact(fact: "Ran the release train.")]
-        existing.buildNotes = "Keep the Tuya bullet."
-
-        let pasted = try XCTUnwrap(TailoringBrief.parse(from: """
-        { "fit_score": 8, "fit_confidence": "high", "candidate_story": "New story" }
-        """))
-        let merged = existing.merging(judgmentFrom: pasted)
-
-        // The judgment is taken…
-        XCTAssertEqual(merged.fitScore, 8)
-        XCTAssertEqual(merged.fitConfidence, "high")
-        XCTAssertEqual(merged.candidateStory, "New story")
-        // …and the candidate's own work survives.
-        XCTAssertEqual(merged.questions.count, 1)
-        XCTAssertEqual(merged.questions.first?.answer, "Yes, for two years.")
-        XCTAssertEqual(merged.recalledFacts.count, 1)
-        XCTAssertEqual(merged.buildNotes, "Keep the Tuya bullet.")
-
-        // A reply that says nothing about a field leaves it alone.
-        let quiet = try XCTUnwrap(TailoringBrief.parse(from: #"{"fit_score": 9}"#))
-        let after = merged.merging(judgmentFrom: quiet)
-        XCTAssertEqual(after.fitScore, 9)
-        XCTAssertEqual(after.candidateStory, "New story", "Not blanked by a reply that omits it")
-    }
-
-    func testTheReconcilerTranscribesTheJudgmentRatherThanMakingOne() {
-        let prompt = PromptBuilder.tailoringReconciliationPrompt(
-            pastedReply: "…", application: JobApplication(companyName: "Example", jobTitle: "Engineer"),
-            allExperiences: [], employments: []
-        )
-        XCTAssertTrue(prompt.contains("\"brief\""))
-        XCTAssertTrue(prompt.contains("\"fit_score\""))
-        XCTAssertTrue(prompt.contains("never score, rank, or assess the application yourself"))
-    }
-
     /// Font size and margins are per application, so the same content can be a
     /// dense two pages for one role and a roomy one for another.
     func testPageLayoutReachesTheRenderedTemplate() {
@@ -929,13 +835,13 @@ final class ResumeTailorTests: XCTestCase {
         XCTAssertTrue(build.contains("Dropping the summary"))
         XCTAssertTrue(build.contains("return `\"summary\": \"\"`"))
 
-        let reconcile = PromptBuilder.tailoringReconciliationPrompt(
-            pastedReply: "Omit the summary.",
-            application: JobApplication(companyName: "Example", jobTitle: "Engineer"),
-            allExperiences: [], employments: []
+        // A pasted edit plan says it with `"action": "drop"`, which becomes the
+        // same empty summary.
+        let contract = ResumeEditPlanPrompt.outputContract(
+            experiences: [], employments: [], selectedIDs: [], variantSelections: [:],
+            hasSummary: true, hasEducation: false
         )
-        XCTAssertTrue(reconcile.contains("omit the summary"))
-        XCTAssertTrue(reconcile.contains("Return `\"summary\": \"\"` for that"))
+        XCTAssertTrue(contract.contains("`drop` removes the section"))
     }
 
     /// A PDF review done in ChatGPT lands in the same check the app runs —

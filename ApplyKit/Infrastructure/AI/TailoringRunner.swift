@@ -20,14 +20,13 @@ import Observation
 @Observable
 final class TailoringRunner {
     enum Job: String, CaseIterable {
-        case brief, clarify, build, reconcile, review
+        case brief, clarify, build, review
 
         var startMessage: String {
             switch self {
             case .brief: "Judging fit"
             case .clarify: "Working through answers"
             case .build: "Building the tailored résumé"
-            case .reconcile: "Reconciling tailoring suggestion"
             case .review: "Reviewing the rendered résumé"
             }
         }
@@ -187,51 +186,8 @@ final class TailoringRunner {
                       application: context.application)
     }
 
-    func reconcile(applicationID: UUID, pastedReply: String) async {
-        guard let context = context(for: applicationID),
-              !pastedReply.trimmed.isEmpty,
-              !isRunning(.reconcile, for: applicationID) else { return }
-
-        let prompt = PromptBuilder.tailoringReconciliationPrompt(
-            pastedReply: pastedReply.trimmed,
-            application: context.application,
-            allExperiences: context.experiences,
-            employments: context.employments
-        )
-        await run(.reconcile, for: applicationID, message: "Reconciling tailoring suggestion") { backend in
-            let attempt = try await backend.runStructured(
-                prompt: prompt,
-                schema: PromptBuilder.pastedReplySchemaSummary,
-                parse: TailoringPastedReply.parse(from:)
-            )
-            guard let reply = attempt.value, let plan = reply.plan else {
-                return .failure(self.unparseableMessage(attempt.raw, label: "tailoring-reconcile",
-                                                        application: context.application,
-                                                        what: "Couldn't extract any changes from that suggestion"))
-            }
-            var count = 0
-            var keptJudgment = false
-            self.mutate(applicationID) { target in
-                let session = TailoringSession(pastedText: pastedReply, plan: plan, appliedChangeIDs: [])
-                target.tailoringPlanData = session.encoded()
-                count = plan.replacements?.count ?? 0
-
-                // The reply's judgment fills the brief panel, which the paste
-                // route used to leave empty. Anything the candidate has done in
-                // the app — questions, answers, facts, notes — survives.
-                if let judged = reply.brief, judged.hasContent {
-                    let existing = target.tailoringBrief ?? TailoringBrief()
-                    target.setTailoringBrief(existing.merging(judgmentFrom: judged))
-                    keptJudgment = true
-                }
-            }
-            let changes = "Found \(count) change\(count == 1 ? "" : "s") to review."
-            return .success(keptJudgment ? "\(changes) Its fit judgment is on the brief." : changes)
-        }
-    }
-
-    /// Stage 2's build. The paste route runs its own pass — it extracts the
-    /// reply's judgment as well as its edits.
+    /// Stage 2's build. A pasted ChatGPT plan doesn't come through here — the
+    /// editor reads it directly (`ResumeEditPlanImporter`).
     private func runPlan(_ job: Job, applicationID: UUID, prompt: String, message: String, label: String,
                          failure: String, success: @escaping (Int) -> String,
                          application: JobApplication) async {

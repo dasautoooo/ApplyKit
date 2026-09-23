@@ -2,35 +2,61 @@
 //  ApplyTailoringSuggestionView.swift
 //  ApplyKit
 //
-//  The Resume Tailor sheet: build the tailored résumé from the Stage 1 brief (or
-//  reconcile a pasted ChatGPT reply), then apply the resulting changes one-by-one
-//  or all at once. Logic lives in ApplicationEditorTailoring.swift; Stage 1 and
-//  its clarify loop live in ApplicationEditorTailorBrief.swift.
+//  The Resume Tailor sheet. Two ways in: an external chat (copy the context,
+//  paste back a Resume Edit Plan, review, optionally have the chat check the
+//  PDF) laid out as numbered steps, or the in-app AI building from the Stage 1
+//  brief. Both end in the same reviewable change list. Logic lives in
+//  ApplicationEditorTailoring.swift; Stage 1 and its clarify loop live in
+//  ApplicationEditorTailorBrief.swift.
 //
 
+import AppKit
 import SwiftUI
 
+/// Where the Resume Tailor sheet's edits come from. Remembered across
+/// applications, since it's a habit rather than a per-role choice.
+enum TailoringSourceMode: String, CaseIterable, Identifiable {
+    case externalChat
+    case inApp
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .externalChat: "External Chat"
+        case .inApp: "In-App AI"
+        }
+    }
+}
+
 extension ApplicationEditorView {
+    var tailoringSource: TailoringSourceMode {
+        TailoringSourceMode(rawValue: tailoringSourceRaw) ?? .externalChat
+    }
+
     var tailoringSheet: some View {
         VStack(alignment: .leading, spacing: 0) {
             tailoringSheetHeader
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    tailoringBriefSummary
-                    Divider()
-                    tailoringBuildSection
-                    if !tailoringChanges.isEmpty {
+                    switch tailoringSource {
+                    case .externalChat:
+                        externalChatFlow
+                    case .inApp:
+                        tailoringBriefSummary
                         Divider()
-                        tailoringChangesSection
+                        tailoringBuildSection
+                        if !tailoringChanges.isEmpty {
+                            Divider()
+                            tailoringChangesSection(showsHeading: true)
+                        }
                     }
-                    Divider()
-                    tailoringPasteSection
                 }
                 .padding(20)
             }
         }
-        .frame(minWidth: 640, idealWidth: 760, minHeight: 520, idealHeight: 680)
+        .frame(minWidth: 640, idealWidth: 760, minHeight: 520, idealHeight: 720)
         .onAppear { restoreTailoringSession() }
     }
 
@@ -44,10 +70,236 @@ extension ApplicationEditorView {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            Picker("Source", selection: $tailoringSourceRaw) {
+                ForEach(TailoringSourceMode.allCases) { mode in
+                    Text(mode.title).tag(mode.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .help("Tailor in ChatGPT, Claude or another chat and paste the plan back, or let the in-app AI build it from the brief")
+            Spacer()
             Button("Done") { showTailoringSheet = false }
                 .keyboardShortcut(.defaultAction)
         }
         .padding(16)
+    }
+
+    // MARK: - External chat
+
+    /// The step the external flow is waiting on — its main button is the
+    /// prominent one.
+    private var externalStep: Int {
+        guard tailoringPlan != nil else { return tailoringContextCopiedAt == nil ? 1 : 2 }
+        return tailoringProgress.pendingChanges > 0 ? 3 : 4
+    }
+
+    private func stepState(_ number: Int, done: Bool) -> TailorStepStatus {
+        if done, number != externalStep { return .done }
+        return number == externalStep ? .current : .upcoming
+    }
+
+    private var externalChatFlow: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            TailorStep(number: 1, title: "Send the context to your chat",
+                       status: stepState(1, done: tailoringContextCopiedAt != nil || tailoringPlan != nil)) {
+                sendContextStep
+            }
+            TailorStep(number: 2, title: "Paste back the edit plan",
+                       status: stepState(2, done: tailoringPlan != nil)) {
+                pastePlanStep
+            }
+            TailorStep(number: 3, title: "Review and apply",
+                       status: stepState(3, done: tailoringPlan != nil && tailoringProgress.pendingChanges == 0)) {
+                if tailoringChanges.isEmpty {
+                    Text("The plan's changes appear here, each with Apply and Revert.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    tailoringChangesSection(showsHeading: false)
+                }
+            }
+            TailorStep(number: 4, title: "Check the rendered PDF (optional)",
+                       status: stepState(4, done: tailoringProgress.review.map { $0.isClean && !tailoringProgress.isReviewStale } ?? false)) {
+                reviewPDFStep
+            }
+        }
+    }
+
+    private var sendContextStep: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Copies the job description, your résumé with bullet ids, and the edit plan format the reply must follow. Paste it into a new chat.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Button {
+                    copyTailoringContext()
+                } label: {
+                    Label(tailoringContextCopiedAt == nil ? "Copy Context" : "Copy Again", systemImage: "doc.on.clipboard")
+                }
+                .prominent(externalStep == 1)
+
+                Menu {
+                    ForEach(ExternalChat.allCases) { chat in
+                        Button(chat.title) { NSWorkspace.shared.open(chat.url) }
+                    }
+                } label: {
+                    Label("Open ChatGPT", systemImage: "arrow.up.forward.app")
+                } primaryAction: {
+                    NSWorkspace.shared.open(ExternalChat.chatGPT.url)
+                }
+                .menuStyle(.button)
+                .fixedSize()
+
+                if let copiedAt = tailoringContextCopiedAt {
+                    Label {
+                        Text("Copied ") + Text(copiedAt, style: .relative) + Text(" ago")
+                    } icon: {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    }
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+        }
+    }
+
+    private var pastePlanStep: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Copy the chat's whole reply and paste it here.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Button {
+                    pasteAndImportTailoringPlan()
+                } label: {
+                    Label(tailoringPlan == nil ? "Paste Reply & Import" : "Paste New Reply & Import",
+                          systemImage: "square.and.arrow.down.on.square")
+                }
+                .prominent(externalStep == 2)
+                .keyboardShortcut("v", modifiers: [.command, .shift])
+                .help("Import the reply on the clipboard (⇧⌘V)")
+                .disabled(isReconcilingTailoring)
+
+                Spacer()
+                if !tailoringChanges.isEmpty || !tailoringPastedText.isEmpty {
+                    Button(role: .destructive) {
+                        clearTailoringSession()
+                    } label: {
+                        Label("Clear", systemImage: "trash")
+                    }
+                }
+            }
+
+            if let status = importStatus {
+                Label(status, systemImage: "checkmark.seal.fill")
+                    .font(.callout)
+                    .foregroundStyle(.green)
+            }
+
+            if !tailoringImportIssues.isEmpty {
+                tailoringImportIssueList
+            }
+
+            DisclosureGroup("Pasted reply", isExpanded: $showPastedPlanText) {
+                VStack(alignment: .leading, spacing: 8) {
+                    TextEditor(text: $tailoringPastedText)
+                        .font(.body.monospaced())
+                        .frame(minHeight: 160)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(Color(nsColor: .separatorColor))
+                        )
+                    Button {
+                        importTailoringPlan(pasted: tailoringPastedText)
+                    } label: {
+                        Label("Import Edited Text", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(isReconcilingTailoring || tailoringPastedText.trimmed.isEmpty)
+                }
+                .padding(.top, 6)
+            }
+            .font(.callout)
+        }
+    }
+
+    /// "Imported · fit 8.5/10 · 4 changes to review", once a plan is in.
+    private var importStatus: String? {
+        guard tailoringPlan != nil, !tailoringImportIssues.contains(where: \.isError) else { return nil }
+        var parts = ["Plan imported"]
+        if let fit = tailoringBrief?.fitScoreText { parts.append("fit \(fit)") }
+        let pending = tailoringProgress.pendingChanges
+        parts.append(pending == 0 ? "everything applied" : "\(pending) change\(pending == 1 ? "" : "s") to review")
+        return parts.joined(separator: " · ")
+    }
+
+    private var reviewPDFStep: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Generate the PDF, copy the text it actually extracts, and ask the chat to review it. Its fixes land in the list above.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Button {
+                    Task { await generateDocument(.resume, replacingExisting: hasGeneratedDocument(.resume)) }
+                } label: {
+                    Label(documentActionTitle(for: .resume), systemImage: "doc.badge.plus")
+                }
+                .prominent(externalStep == 4 && !tailoringProgress.hasRenderedPDF)
+                .disabled(generatingDocumentKind != nil)
+
+                Button {
+                    copyRenderedResumeText()
+                } label: {
+                    Label("Copy PDF Text", systemImage: "doc.on.clipboard")
+                }
+                .disabled(!tailoringProgress.hasRenderedPDF)
+
+                Button {
+                    pasteAndReadReview()
+                } label: {
+                    Label(isReviewingResume ? "Reading…" : "Paste Review & Read", systemImage: "text.magnifyingglass")
+                }
+                .disabled(isReviewingResume || aiBackend == nil)
+                .help(aiBackend == nil
+                      ? "Reading a review uses the in-app AI — configure one in Settings → Tools"
+                      : "Read the review on the clipboard into the same check the app runs")
+                Spacer()
+            }
+
+            if let review = tailoringProgress.review {
+                Label(review.summary + (tailoringProgress.isReviewStale ? " — checked before the latest build" : ""),
+                      systemImage: review.isClean ? "checkmark.seal.fill" : "exclamationmark.bubble")
+                    .font(.callout)
+                    .foregroundStyle(review.isClean && !tailoringProgress.isReviewStale ? .green : .secondary)
+            }
+
+            DisclosureGroup("Pasted review", isExpanded: $showPastedReviewText) {
+                VStack(alignment: .leading, spacing: 8) {
+                    TextEditor(text: $pastedReviewText)
+                        .font(.body.monospaced())
+                        .frame(minHeight: 120)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(Color(nsColor: .separatorColor))
+                        )
+                    Button {
+                        Task { await reconcilePastedReview(pastedReviewText) }
+                    } label: {
+                        Label("Read Edited Text", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(isReviewingResume || pastedReviewText.trimmed.isEmpty || aiBackend == nil)
+                }
+                .padding(.top, 6)
+            }
+            .font(.callout)
+        }
     }
 
     // MARK: - Brief
@@ -94,7 +346,7 @@ extension ApplicationEditorView {
             VStack(alignment: .leading, spacing: 8) {
                 Text("No tailoring brief yet")
                     .font(.subheadline.weight(.semibold))
-                Text("Run **Analyze Fit** in the Job Context panel first, or paste a reply from ChatGPT below.")
+                Text("Run **Analyze Fit** in the Job Context panel first, or switch to **External Chat** to tailor in ChatGPT.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Button {
@@ -138,18 +390,25 @@ extension ApplicationEditorView {
 
     // MARK: - Changes
 
-    private var tailoringChangesSection: some View {
+    private func tailoringChangesSection(showsHeading: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             let pending = tailoringChanges.filter { !$0.isBlocked && !$0.applied && !$0.isInformational }.count
             HStack {
-                Text("Proposed changes")
-                    .font(.headline)
+                if showsHeading {
+                    Text("Proposed changes")
+                        .font(.headline)
+                } else {
+                    Text(pending == 0 ? "All applied." : "\(pending) to review")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 Button {
                     applyAllTailoring()
                 } label: {
                     Label("Apply All", systemImage: "checkmark.circle")
                 }
+                .prominent(tailoringSource == .externalChat && externalStep == 3)
                 .disabled(pending == 0)
             }
 
@@ -202,91 +461,115 @@ extension ApplicationEditorView {
         return groups
     }
 
-    // MARK: - Paste fallback
-
-    private var tailoringPasteSection: some View {
-        DisclosureGroup("Paste a reply from ChatGPT instead") {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Button {
-                        copyTailoringContext()
-                    } label: {
-                        Label("Copy context for ChatGPT", systemImage: "doc.on.clipboard")
-                    }
-                    Spacer()
-                    if !tailoringChanges.isEmpty || !tailoringPastedText.isEmpty {
-                        Button(role: .destructive) {
-                            clearTailoringSession()
-                        } label: {
-                            Label("Clear", systemImage: "trash")
+    /// Errors first — any one of them stops the import — then warnings, which
+    /// don't.
+    private var tailoringImportIssueList: some View {
+        let issues = tailoringImportIssues.filter(\.isError) + tailoringImportIssues.filter { !$0.isError }
+        return VStack(alignment: .leading, spacing: 6) {
+            ForEach(issues) { issue in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: issue.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(issue.isError ? .red : .orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        if !issue.path.isEmpty {
+                            Text(issue.path)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
                         }
+                        Text(issue.message)
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-
-                Text("Paste the reply below to reconcile it into the same reviewable changes.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-
-                TextEditor(text: $tailoringPastedText)
-                    .font(.body.monospaced())
-                    .frame(minHeight: 140)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(Color(nsColor: .separatorColor))
-                    )
-
-                Button {
-                    Task { await reconcileTailoring(pastedReply: tailoringPastedText) }
-                } label: {
-                    Label(tailoringChanges.isEmpty ? "Reconcile" : "Re-reconcile", systemImage: "sparkles")
-                }
-                .disabled(isReconcilingTailoring || tailoringPastedText.trimmed.isEmpty || aiBackend == nil)
-
-                Divider().padding(.vertical, 4)
-                reviewPasteControls
+                .textSelection(.enabled)
             }
-            .padding(.top, 10)
         }
-        .font(.subheadline)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
+    }
+}
+
+/// Chats the context can be taken to. ChatGPT is the default target.
+private enum ExternalChat: String, CaseIterable, Identifiable {
+    case chatGPT
+    case claude
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .chatGPT: "ChatGPT"
+        case .claude: "Claude"
+        }
     }
 
-    /// The same fallback for the PDF check: a review done in ChatGPT lands in
-    /// the same panel, with the same score and the same applyable edits, rather
-    /// than living outside the app.
-    @ViewBuilder private var reviewPasteControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Reviewed the PDF in ChatGPT?").font(.callout.weight(.medium))
-                Spacer()
-                Button {
-                    copyRenderedResumeText()
-                } label: {
-                    Label("Copy the PDF's text", systemImage: "doc.on.clipboard")
+    var url: URL {
+        switch self {
+        case .chatGPT: URL(string: "https://chatgpt.com/")!
+        case .claude: URL(string: "https://claude.ai/new")!
+        }
+    }
+}
+
+/// One numbered step of the external flow: a badge that turns into a check
+/// once done, and the step's own controls beside it.
+private enum TailorStepStatus {
+    case done
+    case current
+    case upcoming
+}
+
+private struct TailorStep<Content: View>: View {
+    let number: Int
+    let title: String
+    let status: TailorStepStatus
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(badgeFill)
+                    .frame(width: 24, height: 24)
+                if status == .done {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                } else {
+                    Text("\(number)")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(status == .current ? Color.white : Color.secondary)
                 }
-                .disabled(!tailoringProgress.hasRenderedPDF)
-                .help(tailoringProgress.hasRenderedPDF
-                      ? "Copy what the rendered PDF actually extracts, to paste into ChatGPT"
-                      : "Generate the résumé PDF first")
             }
-
-            Text("Paste its review below. It's read into the same check — score, findings, and any edits it proposes.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-
-            TextEditor(text: $pastedReviewText)
-                .font(.body.monospaced())
-                .frame(minHeight: 120)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(Color(nsColor: .separatorColor))
-                )
-
-            Button {
-                Task { await reconcilePastedReview(pastedReviewText) }
-            } label: {
-                Label("Read Pasted Review", systemImage: "text.magnifyingglass")
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(status == .upcoming ? .secondary : .primary)
+                    .padding(.top, 2)
+                content
             }
-            .disabled(isReviewingResume || pastedReviewText.trimmed.isEmpty || aiBackend == nil)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var badgeFill: Color {
+        switch status {
+        case .done: .green
+        case .current: .accentColor
+        case .upcoming: Color(nsColor: .quaternaryLabelColor)
+        }
+    }
+}
+
+private extension View {
+    /// The one button a step is waiting on is prominent; the rest stay bordered.
+    @ViewBuilder
+    func prominent(_ isProminent: Bool) -> some View {
+        if isProminent {
+            buttonStyle(.borderedProminent)
+        } else {
+            buttonStyle(.bordered)
         }
     }
 }

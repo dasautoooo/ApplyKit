@@ -6,11 +6,9 @@
 import Foundation
 
 /// A structured set of resume edits. Produced either by the in-app Stage 2
-/// builder (`PromptBuilder.tailoringBuildPrompt`) or by the local AI reconciler
-/// (`PromptBuilder.tailoringReconciliationPrompt`), which maps a pasted ChatGPT
-/// reply — including truncated `"…"` quotes — onto the application's real bullet
-/// UUIDs. Both routes emit this same schema so they share
-/// `buildTailoringChanges`.
+/// builder (`PromptBuilder.tailoringBuildPrompt`) or by
+/// `ResumeEditPlanImporter`, which adapts a pasted Resume Edit Plan v1.0. Both
+/// routes end in this same type so they share `buildTailoringChanges`.
 ///
 /// Every field is optional; an omitted field means "leave the current value
 /// unchanged". The explanatory fields (`summaryRationale`, `drops`, `readiness`,

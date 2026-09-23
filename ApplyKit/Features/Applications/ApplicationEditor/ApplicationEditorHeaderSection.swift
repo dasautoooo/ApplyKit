@@ -43,7 +43,7 @@ extension ApplicationEditorView {
                     } label: {
                         Label("Resume Tailor", systemImage: "wand.and.stars")
                     }
-                    .help("Build the tailored résumé from the brief, review the changes, and apply them")
+                    .help("Tailor the résumé in ChatGPT or with the in-app AI, then review and apply the changes")
 
                     // Secondary actions: labeled but smaller than the two primary
                     // actions above so they read as less important.
@@ -194,7 +194,7 @@ extension ApplicationEditorView {
 
     /// When `includeIDs` is true, each experience bullet is tagged `[id: …]`, each
     /// project `[id: …]`, and each employment `(employment_id: …)` — so a pasted
-    /// tailoring reply can be reconciled against real ids without duplicating the
+    /// tailoring reply can reference real ids without duplicating the
     /// résumé text into a separate pool.
     func applicationContextText(includeAnalysis: Bool, includeIDs: Bool = false) -> String {
         let profile = store.profile
@@ -260,9 +260,18 @@ extension ApplicationEditorView {
                     for item in group.items {
                         switch item {
                         case .roleDescription(let employment):
-                            guard !application.isRoleDescriptionHidden(for: employment.id) else { continue }
+                            // With ids the line is labelled, so it can't be taken
+                            // for a bullet, and a hidden one is still listed so it
+                            // can be brought back.
+                            let hidden = application.isRoleDescriptionHidden(for: employment.id)
                             let role = application.roleDescription(for: employment.id) ?? employment.roleDescription
-                            if !role.trimmed.isEmpty { lines.append("- \(role)") }
+                            guard !role.trimmed.isEmpty, includeIDs || !hidden else { continue }
+                            if includeIDs {
+                                let label = hidden ? "role description, hidden — not on the résumé" : "role description"
+                                lines.append("- [\(label)] \(role)")
+                            } else {
+                                lines.append("- \(role)")
+                            }
                         case .bullet(let bullet):
                             let text = bullet.bulletText(variantID: application.selectedVariantID(for: bullet.id))
                             lines.append(includeIDs ? "- [id: \(bullet.id.uuidString)] \(text)" : "- \(text)")
@@ -279,8 +288,9 @@ extension ApplicationEditorView {
                 let body = projects.map { proj -> String in
                     let name = proj.resumeDisplayName.trimmed.isEmpty ? proj.displayTitle : proj.resumeDisplayName
                     let title = includeIDs ? "\(name) [id: \(proj.id.uuidString)]" : name
-                    let bulletLines = proj.bulletText(variantID: application.selectedVariantID(for: proj.id))
-                        .split(separator: "\n").map { String($0).trimmed }.filter { !$0.isEmpty }
+                    // One project, one id, however many lines it renders as.
+                    let bulletLines = ResumeEditPlanImporter.lines(
+                        of: proj.bulletText(variantID: application.selectedVariantID(for: proj.id)))
                         .map { "- \($0)" }.joined(separator: "\n")
                     return bulletLines.isEmpty ? "#### \(title)" : "#### \(title)\n\(bulletLines)"
                 }.joined(separator: "\n\n")

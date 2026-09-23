@@ -1072,29 +1072,6 @@ extension PromptBuilder {
     """
 
     /// The plan's shape, for the repair pass.
-    /// A pasted reply's shape, for the repair pass: the judgment nested under
-    /// `brief`, the edits at the top level.
-    static let pastedReplySchemaSummary = """
-    {
-      "brief": {
-        "fit_score": 7.5, "fit_confidence": "low | medium | high",
-        "recommended_priority": "High | Normal | Low | Skip",
-        "investment_tier": "Minimal | Standard | Deep", "investment_time": "...",
-        "effort_rationale": "...", "candidate_story": "...",
-        "strong_matches": [{ "claim": "...", "evidence": "...", "experience_id": "<uuid>" }],
-        "gaps": [{ "id": "<slug>", "kind": "genuine | presentation | unknown", "text": "...", "mitigation": "..." }],
-        "plan": { "summary_direction": "...", "skills_direction": "..." }
-      },
-      "summary": "...",
-      "skills_latex": "...",
-      "ordered_experience_ids": ["<uuid>"],
-      "ordered_project_ids": ["<uuid>"],
-      "replacements": [{ "experience_id": "<uuid>", "text": "...", "name": "...", "reason": "...", "signal": "..." }],
-      "drops": [{ "experience_id": "<uuid>", "reason": "..." }],
-      "readiness": "...", "uncertainties": ["..."]
-    }
-    """
-
     static let planSchemaSummary = """
     {
       "summary": "...",

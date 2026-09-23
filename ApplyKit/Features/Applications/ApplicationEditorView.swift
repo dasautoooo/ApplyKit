@@ -37,6 +37,13 @@ struct ApplicationEditorView: View {
     @State var showTailoringSheet = false
     @State var tailoringPastedText = ""
     @State var tailoringChanges: [TailoringChange] = []
+    /// Errors and warnings from the last pasted edit plan import.
+    @State var tailoringImportIssues: [ResumeEditPlanIssue] = []
+    @AppStorage("resumeTailor.source") var tailoringSourceRaw = TailoringSourceMode.externalChat.rawValue
+    /// When the context was last copied for an external chat — step 1's check.
+    @State var tailoringContextCopiedAt: Date?
+    @State var showPastedPlanText = false
+    @State var showPastedReviewText = false
     /// A PDF review pasted from ChatGPT, awaiting reconciliation.
     @State var pastedReviewText = ""
     /// Wording each applied rewrite replaced, so the diff doesn't collapse into
@@ -98,7 +105,6 @@ struct ApplicationEditorView: View {
     var isClarifying: Bool { tailoringRunner.isRunning(.clarify, for: application.id) }
     var isReconcilingTailoring: Bool {
         tailoringRunner.isRunning(.build, for: application.id)
-            || tailoringRunner.isRunning(.reconcile, for: application.id)
     }
 
     /// Timeline as the store currently holds it. Archive and restore are recorded by the

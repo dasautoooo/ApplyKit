@@ -172,6 +172,21 @@ extension ExperienceVariation {
         }
         return "Variant \(index)"
     }
+
+    /// An existing variant with the same title and wording, compared after
+    /// normalizing whitespace (case and punctuation still count). Importing the
+    /// same edit plan twice reuses it instead of adding a duplicate.
+    static func matching(name: String, text: String, in variations: [ExperienceVariation]) -> ExperienceVariation? {
+        let key = (normalized(name), normalized(text))
+        return variations.first { (normalized($0.name), normalized($0.bulletText)) == key }
+    }
+
+    /// Trimmed, CRLF → LF, and runs of spaces or tabs collapsed to one space.
+    static func normalized(_ value: String) -> String {
+        value.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression)
+            .trimmed
+    }
 }
 
 extension ExperienceBullet {

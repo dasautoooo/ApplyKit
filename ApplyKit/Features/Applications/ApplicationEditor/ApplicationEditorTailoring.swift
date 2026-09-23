@@ -2,11 +2,10 @@
 //  ApplicationEditorTailoring.swift
 //  ApplyKit
 //
-//  Stage 2 of the Resume Tailor: turn an approved brief (or a pasted ChatGPT
-//  reply) into a TailoringPlan via a local AI call, then apply the resulting
-//  changes one-by-one or all at once. Both routes emit the same plan schema —
-//  see TailoringPlan.swift, TailoringPrompts.swift, and the reconciliation
-//  prompt in PromptBuilder.
+//  Stage 2 of the Resume Tailor: turn an approved brief (via a local AI call)
+//  or a pasted ChatGPT edit plan (read deterministically, see
+//  ResumeEditPlanImporter.swift) into a TailoringPlan, then apply the
+//  resulting changes one-by-one or all at once.
 //
 
 import AppKit
@@ -106,10 +105,10 @@ extension ApplicationEditorView {
 
     // MARK: - Copy context for ChatGPT
 
-    /// The `Copy Context` prompt with ids embedded inline in the résumé section
-    /// (so bullet text is never duplicated), plus only the bullets that aren't
-    /// currently selected, and a short note on referencing ids. This is what the
-    /// user pastes into ChatGPT so its reply can be reconciled unambiguously.
+    /// The `Copy Context` prompt with ids embedded inline in the résumé section,
+    /// plus the bullets that aren't currently selected, and the Resume Edit Plan
+    /// v1.0 output contract. This is what the user pastes into ChatGPT; its
+    /// reply is read by `importTailoringPlan` without any AI in between.
     func tailoringContextText() -> String {
         let base = applicationContextText(includeAnalysis: true, includeIDs: true)
         let selected = application.selectedExperienceIDs.union(application.selectedProjectIDs)
@@ -129,12 +128,14 @@ extension ApplicationEditorView {
             parts.append("## Other Available Bullets (not currently selected)\n\(lines)")
         }
 
-        parts.append("""
-        ## Referencing bullets
-        Each bullet above is tagged `[id: …]`, each project `[id: …]`, and each employment \
-        `(employment_id: …)`. When you propose which bullets to select, drop, reorder, or \
-        rewrite, refer to them by these ids so the edits can be applied automatically.
-        """)
+        parts.append(ResumeEditPlanPrompt.outputContract(
+            experiences: experiences, employments: employments,
+            selectedIDs: selected, variantSelections: application.selectedVariantIDs,
+            roleDescriptions: application.employmentRoleDescriptions,
+            hiddenRoleDescriptions: Set(employments.map(\.id).filter(application.isRoleDescriptionHidden(for:))),
+            hasSummary: application.hasSummary,
+            hasEducation: !store.profile.educationBlock.trimmed.isEmpty
+        ))
 
         return parts.joined(separator: "\n\n---\n\n")
     }
@@ -165,7 +166,38 @@ extension ApplicationEditorView {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(tailoringContextText(), forType: .string)
+        tailoringContextCopiedAt = Date()
         activityMonitor.succeed("Tailoring context copied. Paste it into ChatGPT.")
+    }
+
+    /// The clipboard's text, unless it's empty or still holds something this
+    /// app copied out — the usual slip is pasting back before copying the reply.
+    private func pastedReply(rejectingPrefix copiedPrefix: String, what: String) -> String? {
+        guard let text = NSPasteboard.general.string(forType: .string), !text.trimmed.isEmpty else {
+            activityMonitor.fail("The clipboard is empty. Copy the chat's reply first.")
+            return nil
+        }
+        guard !text.trimmed.hasPrefix(copiedPrefix) else {
+            activityMonitor.fail("The clipboard still holds the \(what) you copied. Copy the chat's reply instead.")
+            return nil
+        }
+        return text
+    }
+
+    /// Step 2 in one click: take the reply off the clipboard and import it.
+    /// The text stays in the editor below, opened when there's something to fix.
+    func pasteAndImportTailoringPlan() {
+        guard let text = pastedReply(rejectingPrefix: "# Application Context:", what: "context") else { return }
+        tailoringPastedText = text
+        importTailoringPlan(pasted: text)
+        if tailoringImportIssues.contains(where: \.isError) { showPastedPlanText = true }
+    }
+
+    /// The same for a PDF review done in the chat.
+    func pasteAndReadReview() {
+        guard let text = pastedReply(rejectingPrefix: "Résumé for ", what: "PDF text") else { return }
+        pastedReviewText = text
+        Task { await reconcilePastedReview(text) }
     }
 
     // MARK: - Runs
@@ -181,8 +213,47 @@ extension ApplicationEditorView {
         await tailoringRunner.build(applicationID: application.id)
     }
 
-    func reconcileTailoring(pastedReply: String) async {
-        await tailoringRunner.reconcile(applicationID: application.id, pastedReply: pastedReply)
+    /// Reads a pasted Resume Edit Plan. Any error leaves the current plan and
+    /// résumé untouched; warnings are shown but don't block the import.
+    func importTailoringPlan(pasted: String) {
+        let context = ResumeEditPlanContext(
+            experiences: experiences,
+            employments: employments,
+            hasSummary: application.hasSummary,
+            hasEducation: !store.profile.educationBlock.trimmed.isEmpty,
+            roleDescriptionOverrides: application.employmentRoleDescriptions,
+            currentExperienceOrder: application.experienceOrder,
+            selectedIDs: application.selectedExperienceIDs.union(application.selectedProjectIDs)
+        )
+        let result = ResumeEditPlanImporter.importPlan(from: pasted, context: context)
+        tailoringImportIssues = result.issues
+        guard let plan = result.plan else {
+            activityMonitor.fail("The edit plan has \(result.errors.count) problem\(result.errors.count == 1 ? "" : "s") to fix.")
+            return
+        }
+
+        // A fresh plan starts with no applied markers — they belong to the plan
+        // they were recorded against. The raw paste is kept for traceability.
+        appliedBeforeText = [:]
+        revertPoints = [:]
+        application.tailoringPlanData = TailoringSession(pastedText: pasted, plan: plan).encoded()
+        if let index = store.applications.firstIndex(where: { $0.id == application.id }) {
+            store.applications[index].tailoringPlanData = application.tailoringPlanData
+        }
+        // The plan's score lands on the brief, which also mirrors it to the
+        // applications list. Everything else on the brief is left as it was.
+        if let fitScore = result.fitScore {
+            var brief = tailoringBrief ?? TailoringBrief()
+            brief.fitScore = fitScore
+            editingBrief = brief
+            commitTailoringBrief()
+        } else {
+            persistApplicationChanges()
+        }
+        tailoringChanges = allTailoringChanges()
+
+        let rewrites = plan.replacements?.count ?? 0
+        activityMonitor.succeed("Imported the edit plan: \(rewrites) rewrite\(rewrites == 1 ? "" : "s") to review.")
     }
 
     // MARK: - Build changes
@@ -540,9 +611,12 @@ extension ApplicationEditorView {
         case .selection(let work, let projects):
             applySelection(work: work, projects: projects)
         case .replacement(let replacement):
-            let variantID = applyReplacement(replacement)
-            revert.createdVariantID = variantID
-            revert.createdVariantOwnerID = replacement.experienceID
+            // Only a variant this change minted is deleted on revert; one it
+            // reused was there before and stays.
+            if let variant = applyReplacement(replacement), variant.created {
+                revert.createdVariantID = variant.id
+                revert.createdVariantOwnerID = replacement.experienceID
+            }
         case .roleDescription(let employmentID, let include, let text):
             if let text, !text.trimmed.isEmpty {
                 application.setRoleDescription(text, for: employmentID)
@@ -681,18 +755,26 @@ extension ApplicationEditorView {
         return created.id
     }
 
+    /// Selects the rewrite as this bullet's wording. Re-applying the same plan
+    /// reuses the variant it made the first time rather than minting a copy.
     @discardableResult
-    private func applyReplacement(_ replacement: ResolvedReplacement) -> UUID? {
+    private func applyReplacement(_ replacement: ResolvedReplacement) -> (id: UUID, created: Bool)? {
         guard let idx = store.experiences.firstIndex(where: { $0.id == replacement.experienceID }) else { return nil }
         var bullet = store.experiences[idx]
-        let variant = ExperienceVariation(
-            name: replacement.name.isEmpty ? ExperienceVariation.defaultName(existing: bullet.variations) : replacement.name,
-            bulletText: replacement.text,
-            notes: replacement.reason
-        )
-        bullet.variations.append(variant)
-        store.experiences[idx] = bullet
-        persistExperienceChanges(bullet)
+        let name = replacement.name.isEmpty ? ExperienceVariation.defaultName(existing: bullet.variations) : replacement.name
+        let variant: ExperienceVariation
+        let created: Bool
+        if let existing = ExperienceVariation.matching(name: name, text: replacement.text,
+                                                        in: bullet.variations(visibleTo: application.id)) {
+            variant = existing
+            created = false
+        } else {
+            variant = ExperienceVariation(name: name, bulletText: replacement.text, notes: replacement.reason)
+            bullet.variations.append(variant)
+            store.experiences[idx] = bullet
+            persistExperienceChanges(bullet)
+            created = true
+        }
 
         if replacement.isProject {
             application.setProject(replacement.experienceID, selected: true)
@@ -700,7 +782,7 @@ extension ApplicationEditorView {
             application.setExperience(replacement.experienceID, selected: true)
         }
         application.setVariant(variant.id, for: replacement.experienceID)
-        return variant.id
+        return (variant.id, created)
     }
 
     // MARK: - Session persistence
@@ -751,6 +833,7 @@ extension ApplicationEditorView {
 
     func clearTailoringSession() {
         tailoringPastedText = ""
+        tailoringImportIssues = []
         tailoringChanges = []
         application.tailoringPlanData = ""
         if let index = store.applications.firstIndex(where: { $0.id == application.id }) {
