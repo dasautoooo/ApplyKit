@@ -7,6 +7,7 @@ import SwiftUI
 
 enum SidebarDestination: String, CaseIterable, Identifiable {
     case applications = "Applications"
+    case insights = "Insights"
     case discover = "Discover"
     case masterResumes = "Master Resumes"
     case employments = "Employments"
@@ -17,6 +18,7 @@ enum SidebarDestination: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .applications: "briefcase"
+        case .insights: "chart.bar.xaxis"
         case .discover: "sparkle.magnifyingglass"
         case .masterResumes: "doc.on.doc"
         case .employments: "building.2"
@@ -50,6 +52,8 @@ struct ContentView: View {
             switch selection ?? .applications {
             case .applications:
                 ApplicationsWorkspaceView()
+            case .insights:
+                InsightsDashboardView()
             case .discover:
                 DiscoveryWorkspaceView()
             case .masterResumes:

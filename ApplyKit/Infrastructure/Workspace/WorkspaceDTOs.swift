@@ -30,10 +30,31 @@ struct ApplicationEventDTO: Codable {
     var id: String; var date: String?; var kind: String
     var fromStatus: String?; var toStatus: String?
     var title: String?; var note: String?; var inferred: Bool?
+    var interviewType: String?; var interviewResult: String?
+    var interview: InterviewDetailsDTO?
     enum CodingKeys: String, CodingKey {
         case id; case date; case kind; case fromStatus = "from_status"; case toStatus = "to_status"
         case title; case note; case inferred
+        case interviewType = "interview_type"; case interviewResult = "interview_result"
+        case interview
     }
+}
+
+/// Logistics, prep, and debrief of an interview step, nested under its timeline entry.
+/// Every key is optional so a step with only some of it filled in stays short on disk.
+struct InterviewDetailsDTO: Codable {
+    var durationMinutes: Int?; var format: String?; var location: String?; var interviewers: String?
+    var prepChecklist: [InterviewChecklistItemDTO]?; var prepNotes: String?
+    var questionsAsked: String?; var selfRating: Int?
+    enum CodingKeys: String, CodingKey {
+        case durationMinutes = "duration_minutes"; case format; case location; case interviewers
+        case prepChecklist = "prep_checklist"; case prepNotes = "prep_notes"
+        case questionsAsked = "questions_asked"; case selfRating = "self_rating"
+    }
+}
+
+struct InterviewChecklistItemDTO: Codable {
+    var id: String; var text: String; var done: Bool?
 }
 
 /// Contents of an application's `timeline.yml` sidecar.

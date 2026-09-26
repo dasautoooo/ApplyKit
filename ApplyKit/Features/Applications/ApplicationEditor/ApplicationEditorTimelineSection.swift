@@ -11,7 +11,8 @@ extension ApplicationEditorView {
     }
 }
 
-/// Dated history of an application: automatic status/lifecycle entries plus hand-written notes.
+/// Dated history of an application: automatic status/lifecycle entries plus hand-written notes
+/// and interview rounds.
 ///
 /// A standalone view rather than another extension on the editor because it owns editing state,
 /// and extensions can't add stored properties.
@@ -21,21 +22,36 @@ struct ApplicationTimelineSection: View {
 
     var body: some View {
         DetailPanel("Timeline", collapseKey: "applicationEditor.collapsed.timeline") {
-            Button(action: addEntry) {
+            Menu {
+                Button(action: addNote) {
+                    Label("Note", systemImage: "text.bubble")
+                }
+                .help("Record something that happened — a call, an email, a follow-up")
+                Button { addInterviewStep(.recruiterScreen) } label: {
+                    Label("Recruiter Screen", systemImage: "phone")
+                }
+                Button { addInterviewStep(.coding) } label: {
+                    Label("Interview Round", systemImage: "person.2")
+                }
+                .help("Log an interview round; the round number follows the dates")
+            } label: {
                 Label("Add Entry", systemImage: "plus")
             }
+            .menuStyle(.button)
+            .fixedSize()
             .controlSize(.small)
-            .help("Record something that happened — a call, an email, a follow-up")
         } content: {
-            if application.timeline.isEmpty {
+            let entries = application.displayedTimeline
+            if entries.isEmpty {
                 Text("No timeline entries yet.")
                     .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(application.timeline.enumerated()), id: \.element.id) { index, event in
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, event in
                         ApplicationTimelineRow(
                             event: binding(for: event),
-                            isLast: index == application.timeline.count - 1,
+                            title: event.isInterview ? application.stepTitle(for: event) : event.displayTitle,
+                            isLast: index == entries.count - 1,
                             isEditing: editingEventID == event.id,
                             onToggleEdit: {
                                 editingEventID = editingEventID == event.id ? nil : event.id
@@ -59,15 +75,22 @@ struct ApplicationTimelineSection: View {
         )
     }
 
-    private func addEntry() {
+    private func addNote() {
         let event = ApplicationEvent(kind: .note)
         application.recordEvent(event)
+        editingEventID = event.id
+    }
+
+    private func addInterviewStep(_ type: InterviewType) {
+        let event = ApplicationEvent.newInterviewStep(type)
+        application.recordInterviewStep(event)
         editingEventID = event.id
     }
 }
 
 private struct ApplicationTimelineRow: View {
     @Binding var event: ApplicationEvent
+    let title: String
     let isLast: Bool
     let isEditing: Bool
     let onToggleEdit: () -> Void
@@ -96,7 +119,7 @@ private struct ApplicationTimelineRow: View {
     private var rail: some View {
         VStack(spacing: 0) {
             Group {
-                if event.isStatusChange {
+                if event.isStatusChange || event.isInterview {
                     Circle().fill(Color.accentColor)
                 } else {
                     Circle()
@@ -124,9 +147,13 @@ private struct ApplicationTimelineRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 14)
 
-            Text(event.displayTitle)
+            Text(title)
                 .font(.callout.weight(.medium))
                 .lineLimit(1)
+
+            if event.isInterview {
+                InterviewResultMenu(step: $event)
+            }
 
             if let detail = event.transitionDetail {
                 Text(detail)
@@ -167,6 +194,21 @@ private struct ApplicationTimelineRow: View {
                     .textFieldStyle(.roundedBorder)
             }
 
+            if event.isInterview {
+                HStack(spacing: 12) {
+                    InterviewTypePicker(step: $event)
+                    InterviewResultPicker(step: $event)
+                }
+                .controlSize(.small)
+
+                TextField("Label (optional), e.g. pair programming with the iOS team", text: $event.title)
+                    .textFieldStyle(.roundedBorder)
+
+                Text("Logistics, prep, and debrief are in Interview Process.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             TextField("Details (optional)", text: $event.note)
                 .textFieldStyle(.roundedBorder)
 
@@ -177,7 +219,11 @@ private struct ApplicationTimelineRow: View {
                         get: { event.date },
                         // Correcting the date is the point of editing an inferred entry, so
                         // the approximate flag comes off once a real one is supplied.
-                        set: { event.date = $0; event.isInferred = false }
+                        set: { date in
+                            // Setting a time on a step still being arranged schedules it.
+                            if event.isInterview { event.schedule(at: date) } else { event.date = date }
+                            event.isInferred = false
+                        }
                     ),
                     displayedComponents: [.date, .hourAndMinute]
                 )

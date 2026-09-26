@@ -185,6 +185,8 @@ struct ApplicationEditorView: View {
                         DetailPanel("Role Details", collapseKey: "applicationEditor.collapsed.roleDetails") {
                             roleForm
                         }
+                        interviewProcessSection
+                            .editorSection(.interviews, space: scrollSpace)
                         timelineSection
                             .editorSection(.timeline, space: scrollSpace)
                         masterResumePanel

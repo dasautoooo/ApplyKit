@@ -12,13 +12,97 @@ enum ApplicationStatus: String, StoredStringEnum {
     case preparing = "Preparing"
     case applied = "Applied"
     case referralRequested = "Referral Requested"
+    /// The interview phase, kept in step with the Interview Process: a logged recruiter screen
+    /// and nothing further is Recruiter Screen, any round is Interviewing. Which round, and how
+    /// it went, lives on the steps.
     case recruiterScreen = "Recruiter Screen"
-    case technicalInterview = "Technical Interview"
-    case finalInterview = "Final Interview"
+    case interviewing = "Interviewing"
     case offer = "Offer"
     case rejected = "Rejected"
     case ghosted = "Ghosted"
     case withdrawn = "Withdrawn"
+}
+
+extension ApplicationStatus {
+    /// Statuses older workspaces used for interview rounds, before rounds became steps.
+    static let legacyRoundRawValues: Set<String> = ["Technical Interview", "Final Interview"]
+
+    /// Parses a status read from disk. The legacy round statuses fold into `.interviewing`
+    /// so those applications aren't silently reset to Saved. Only the current status is
+    /// migrated: the timeline keeps old values verbatim, since that is what the status was.
+    static func stored(_ raw: String) -> ApplicationStatus? {
+        legacyRoundRawValues.contains(raw) ? .interviewing : ApplicationStatus(rawValue: raw)
+    }
+
+    /// Position along the open pipeline; nil for the closed-out statuses (Offer and the exits),
+    /// which interview steps never move an application out of.
+    private var pipelineRank: Int? {
+        switch self {
+        case .saved, .interested, .preparing, .applied, .referralRequested: 0
+        case .recruiterScreen: 1
+        case .interviewing: 2
+        case .offer, .rejected, .ghosted, .withdrawn: nil
+        }
+    }
+
+    /// Whether logging a step that implies `later` should advance this status to it.
+    func precedes(_ later: ApplicationStatus) -> Bool {
+        guard let rank = pipelineRank, let target = later.pipelineRank else { return false }
+        return rank < target
+    }
+
+    /// Recruiter Screen or Interviewing: the statuses that mirror the Interview Process.
+    var isInterviewPhase: Bool { self == .recruiterScreen || self == .interviewing }
+
+    /// Offer and the exits: settled, so nothing automatic changes them.
+    var isClosed: Bool { pipelineRank == nil }
+}
+
+enum InterviewType: String, StoredStringEnum {
+    /// Marks the recruiter's call. A step like the rest, but not numbered as a round and
+    /// counted as the Screen stage; added as its own kind of step, never picked as a round type.
+    case recruiterScreen = "Recruiter Screen"
+    case onlineAssessment = "Online Assessment"
+    case phoneScreen = "Phone Screen"
+    case coding = "Coding"
+    case systemDesign = "System Design"
+    case takeHome = "Take-home"
+    case behavioral = "Behavioral"
+    case hiringManager = "Hiring Manager"
+    case teamMatch = "Team Match"
+    case onsite = "Onsite / Loop"
+    case other = "Other"
+}
+
+extension InterviewType {
+    /// What a round can be — everything but the recruiter screen.
+    static var roundTypes: [InterviewType] { allCases.filter { $0 != .recruiterScreen } }
+}
+
+enum InterviewFormat: String, StoredStringEnum {
+    case video = "Video"
+    case phone = "Phone"
+    case onsite = "Onsite"
+    case other = "Other"
+
+    var systemImage: String {
+        switch self {
+        case .video: "video"
+        case .phone: "phone"
+        case .onsite: "building.2"
+        case .other: "ellipsis.circle"
+        }
+    }
+}
+
+enum InterviewResult: String, StoredStringEnum {
+    /// They've reached out and a time is being arranged. The step's date is when it was
+    /// logged, not when it happens — there is no time yet.
+    case scheduling = "Scheduling"
+    case scheduled = "Scheduled"
+    case awaiting = "Awaiting"
+    case passed = "Passed"
+    case didNotAdvance = "Didn't Advance"
 }
 
 enum ApplicationPriority: String, StoredStringEnum {

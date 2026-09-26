@@ -79,7 +79,6 @@ extension ApplicationEditorView {
                     .padding(.leading, 4)
                 }
             }
-
         }
         .padding(.bottom, 2)
         .sheet(isPresented: $showTailoringSheet) {
@@ -91,12 +90,13 @@ extension ApplicationEditorView {
         VStack(spacing: 12) {
             HStack(alignment: .top, spacing: 16) {
                 LabeledControl("Status") {
-                    // Routed through setStatus rather than bound straight to statusRaw so the
-                    // transition lands in the timeline. A binding setter fires only on a real
-                    // pick — never when the editor loads or writes an application back.
+                    // Routed through pickStatus rather than bound straight to statusRaw so the
+                    // transition lands in the timeline, and an interview-phase pick gets a step
+                    // to back it. A binding setter fires only on a real pick — never when the
+                    // editor loads or writes an application back.
                     Picker("Status", selection: Binding(
                         get: { application.statusRaw },
-                        set: { application.setStatus(rawValue: $0) }
+                        set: { application.pickStatus(rawValue: $0) }
                     )) {
                         ForEach(ApplicationStatus.allCases) { status in
                             Text(status.rawValue).tag(status.rawValue)

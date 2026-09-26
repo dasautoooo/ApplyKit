@@ -4,16 +4,26 @@ Native macOS app (SwiftUI) for job application management. It tracks application
 
 ## Sections
 
-The sidebar has five sections.
+The sidebar has six sections.
 
 **Applications**: one record per job application. The editor holds:
 - Role details, status, priority, and the job description. Status changes, archive/restore, and manual notes are recorded on a per-application timeline.
+- Interview Process: the recruiter screen and each interview round, one row per step showing its result and time; click a row to edit it. A step has a type, a result, logistics (time, duration, format, meeting link or address, interviewers), a prep checklist and notes, and a debrief (1–5 rating, questions asked, notes). Rounds are numbered in date order, and the screen isn't counted as one. A new step starts as Scheduling and becomes Scheduled once it has a time.
 - Resume content: selected bullets and variants, their order, section order, summary, skills block, role-description overrides, and page layout (font size, margins). See [Resume content model](#resume-content-model).
 - Documents: generate the resume (LaTeX → PDF) and draft a cover letter.
 - The Resume Tailor (see [Resume Tailor](#resume-tailor)).
 - Applications can be created from a job-posting URL. ApplyKit reads the posting through the ATS API when it recognizes the host, or renders the page in an offscreen `WKWebView`, extracts the role details with the AI backend, and starts the resume from the best-matching master resume. Applications can also be duplicated and archived.
 
-Status pipeline: `Saved → Interested → Preparing → Applied → Referral Requested → Recruiter Screen → Technical Interview → Final Interview → Offer / Rejected / Ghosted / Withdrawn`
+Status pipeline: `Saved → Interested → Preparing → Applied → Referral Requested → Recruiter Screen → Interviewing → Offer / Rejected / Ghosted / Withdrawn`
+
+Recruiter Screen and Interviewing follow the Interview Process. Logging a screen moves the status to Recruiter Screen, and logging a round moves it to Interviewing. Deleting steps moves it back, and deleting the last one restores the status from before. Picking either status adds the missing step. Offer, Rejected, Ghosted and Withdrawn never change automatically, and a step marked Didn't Advance offers to set Rejected. The steps are the timeline's record of this phase, so moves into it aren't logged as separate status changes. Older workspaces load `Technical Interview` and `Final Interview` as Interviewing, and their timelines keep the old names.
+
+**Insights**: how applications move through the pipeline, computed live from the workspace. KPI tiles (applied, response, interview, and offer rates, median days to a reply) over a stage funnel, a Sankey flow, the current pipeline, weekly activity, time to response, and fit score vs outcome. The whole dashboard (toolbar Share) or any single chart (the card's share button) can be shared through the system share menu, copied, or saved as PNG or PDF; exports render light on white.
+- Applied: has an applied date, an Applied status in its history, or a later stage (Rejected and Ghosted included). Saved, or withdrawn before applying, doesn't count.
+- Stages run Applied → Screen → Round 1–4+ → Offer. Reaching a stage counts every stage before it, and Offer can follow any round.
+- Archived applications count, since rejections usually get archived.
+- A step still in Scheduling counts toward reach only if it's a screen, and never toward dates. History reconstructed for older applications counts toward reach but not toward durations.
+- The date range filters by applied date, or saved date if never applied. Refresh (⌘R) re-anchors "now".
 
 **Discover**: tracks company job boards and collects new postings into an inbox.
 - Providers: Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Workable, Recruitee, BambooHR, Breezy, JazzHR, Personio, Teamtailor, iCIMS, SuccessFactors, Eightfold, Phenom, Avature, Cornerstone, and first-party boards for Amazon, Apple, Google, Meta, Tesla, Uber, and ByteDance/TikTok. A few are browser-backed (`WKWebView`).
@@ -122,7 +132,7 @@ On first launch ApplyKit asks for a workspace directory and initializes it.
 │       ├── application.yml       # fields + resume content (see above)
 │       ├── job-description.md
 │       ├── notes.md
-│       ├── timeline.yml
+│       ├── timeline.yml          # status changes, notes, interview steps
 │       ├── tailoring-brief.json      # Stage 1 brief, questions, answers, facts
 │       ├── tailoring-suggestion.json # current plan, pasted reply, applied/revert state
 │       ├── tailoring-review.json     # latest PDF check
@@ -151,7 +161,7 @@ Every file is plain text and can be read, edited, or version-controlled outside 
 ApplyKit/
 ├── App/               # entry point, sidebar, activity monitor, settings window
 ├── Domain/            # Codable value types: applications, tailoring plan/brief/review,
-│                      # resume edit plan + importer, experience bank, discovery, settings
+│                      # resume edit plan + importer, insights, experience bank, discovery, settings
 ├── Features/          # SwiftUI views per section (application editor is split by concern)
 ├── Infrastructure/
 │   ├── AI/            # CLI backends, prompt builders, TailoringRunner, edit plan prompt
@@ -165,10 +175,10 @@ ApplyKit/
 ```
 
 - **State:** a single `@Observable` `AppDataStore` holds the workspace in memory. Views read and write it directly; there is no Combine and no separate view-model layer. `TailoringRunner` owns long AI runs so they survive leaving or closing an editor, and several applications can tailor at once.
-- **Persistence:** snake_case YAML DTOs via [Yams](https://github.com/jpsim/Yams), mapped to and from domain types in `WorkspaceFiles`. New fields are optional in the DTOs and get defaults on load; there is no migration framework.
+- **Persistence:** snake_case YAML DTOs via [Yams](https://github.com/jpsim/Yams), mapped to and from domain types in `WorkspaceFiles`. New fields are optional in the DTOs and get defaults on load, and renamed status values are mapped on load; there is no migration framework.
 - **AI:** each run is a one-shot CLI subprocess. Structured replies are parsed from JSON, with one repair call when parsing fails. An empty or unparseable reply is saved to `ai-responses/` and surfaced as an error.
 - **Sandbox:** not sandboxed, because it spawns CLI subprocesses and LaTeX. The workspace path and a bookmark are kept in `UserDefaults`.
-- **Tests:** XCTest (`ApplyKitTests/`), covering the tailoring plan and edit plan import, rendering, DTO round-trips, job import, discovery, and the timeline.
+- **Tests:** XCTest (`ApplyKitTests/`), covering the tailoring plan and edit plan import, rendering, DTO round-trips, job import, discovery, the timeline, interview steps and status sync, and the insights model.
 
 ## Contributing
 

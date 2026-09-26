@@ -146,8 +146,44 @@ enum WorkspaceFiles {
                 toStatus: event.toStatusRaw.isEmpty ? nil : event.toStatusRaw,
                 title: event.title.isEmpty ? nil : event.title,
                 note: event.note.isEmpty ? nil : event.note,
-                inferred: event.isInferred ? true : nil)
+                inferred: event.isInferred ? true : nil,
+                interviewType: event.interviewTypeRaw.isEmpty ? nil : event.interviewTypeRaw,
+                interviewResult: event.interviewResultRaw.isEmpty ? nil : event.interviewResultRaw,
+                interview: interviewDetailsDTO(from: event.interview))
         })
+    }
+
+    static func interviewDetailsDTO(from details: InterviewDetails) -> InterviewDetailsDTO? {
+        guard !details.isEmpty else { return nil }
+        func nonEmpty(_ text: String) -> String? { text.isEmpty ? nil : text }
+        return InterviewDetailsDTO(
+            durationMinutes: details.durationMinutes,
+            format: nonEmpty(details.formatRaw),
+            location: nonEmpty(details.location),
+            interviewers: nonEmpty(details.interviewers),
+            prepChecklist: details.prepChecklist.isEmpty ? nil : details.prepChecklist.map {
+                InterviewChecklistItemDTO(id: $0.id.uuidString, text: $0.text, done: $0.isDone ? true : nil)
+            },
+            prepNotes: nonEmpty(details.prepNotes),
+            questionsAsked: nonEmpty(details.questionsAsked),
+            selfRating: details.selfRating
+        )
+    }
+
+    static func makeInterviewDetails(from dto: InterviewDetailsDTO?) -> InterviewDetails {
+        guard let dto else { return InterviewDetails() }
+        return InterviewDetails(
+            durationMinutes: dto.durationMinutes,
+            formatRaw: dto.format ?? "",
+            location: dto.location ?? "",
+            interviewers: dto.interviewers ?? "",
+            prepChecklist: (dto.prepChecklist ?? []).map {
+                InterviewChecklistItem(id: UUID(uuidString: $0.id) ?? UUID(), text: $0.text, isDone: $0.done ?? false)
+            },
+            prepNotes: dto.prepNotes ?? "",
+            questionsAsked: dto.questionsAsked ?? "",
+            selfRating: dto.selfRating
+        )
     }
 
     static func makeTimeline(from dto: ApplicationTimelineDTO) -> [ApplicationEvent] {
@@ -156,11 +192,15 @@ enum WorkspaceFiles {
                 id: UUID(uuidString: item.id) ?? UUID(),
                 date: WorkspaceDateCodec.date(from: item.date) ?? Date(),
                 kind: ApplicationEventKind(rawValue: item.kind) ?? .note,
+                // Kept verbatim, legacy statuses included: history records what the status was.
                 fromStatusRaw: item.fromStatus ?? "",
                 toStatusRaw: item.toStatus ?? "",
                 title: item.title ?? "",
                 note: item.note ?? "",
-                isInferred: item.inferred ?? false
+                isInferred: item.inferred ?? false,
+                interviewTypeRaw: item.interviewType ?? "",
+                interviewResultRaw: item.interviewResult ?? "",
+                interview: makeInterviewDetails(from: item.interview)
             )
         }
         // Repairs sidecars written by a build that could append an entry twice,
@@ -173,7 +213,7 @@ enum WorkspaceFiles {
 
     static func makeApplication(from dto: ApplicationFileDTO, appFolder: URL) -> JobApplication {
         var app = JobApplication(companyName: dto.companyName, jobTitle: dto.jobTitle,
-            status: ApplicationStatus(rawValue: dto.status) ?? .saved, priority: ApplicationPriority(rawValue: dto.priority) ?? .low)
+            status: ApplicationStatus.stored(dto.status) ?? .saved, priority: ApplicationPriority(rawValue: dto.priority) ?? .low)
         if let id = UUID(uuidString: dto.id) { app.id = id }
         app.jobURL = dto.jobURL; app.location = dto.location; app.workModeRaw = dto.workMode
         app.sourceMasterResumeID = dto.sourceMasterResumeID.flatMap(UUID.init(uuidString:))
@@ -218,7 +258,11 @@ enum WorkspaceFiles {
         if let stored = try? YAMLFileStore.read(ApplicationTimelineDTO.self, from: timelineURL) {
             app.timeline = makeTimeline(from: stored)
         } else {
-            app.timeline = ApplicationTimeline.backfilled(for: app)
+            // Inferred from the status as stored, so a legacy value like "Technical Interview"
+            // keeps its meaning in the history rather than reading as Interviewing.
+            var asStored = app
+            asStored.statusRaw = dto.status
+            app.timeline = ApplicationTimeline.backfilled(for: asStored)
         }
         return app
     }
