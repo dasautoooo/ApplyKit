@@ -3,7 +3,7 @@ import Foundation
 /// A step of the application funnel. Pre-apply statuses aren't stages: the funnel starts
 /// at the point the company could first respond.
 enum FunnelStage: Int, CaseIterable, Comparable, Identifiable {
-    case applied, screen, round1, round2, round3, round4Plus, offer
+    case applied, screen, round1, round2, round3, round4, round5Plus, offer
 
     var id: Int { rawValue }
 
@@ -16,7 +16,8 @@ enum FunnelStage: Int, CaseIterable, Comparable, Identifiable {
         case .round1: "Round 1"
         case .round2: "Round 2"
         case .round3: "Round 3"
-        case .round4Plus: "Round 4+"
+        case .round4: "Round 4"
+        case .round5Plus: "Round 5+"
         case .offer: "Offer"
         }
     }
@@ -26,7 +27,8 @@ enum FunnelStage: Int, CaseIterable, Comparable, Identifiable {
         case ...1: .round1
         case 2: .round2
         case 3: .round3
-        default: .round4Plus
+        case 4: .round4
+        default: .round5Plus
         }
     }
 }
@@ -59,7 +61,7 @@ enum FunnelOutcome: Int, CaseIterable, Identifiable {
 /// passed Applied, Screen, and rounds 1–2 even when the user skipped those statuses, since
 /// skipping or jumping back in the picker is common and the funnel asks "ever reached", not
 /// "passed through in order". Offer is the exception: it can follow any round, so an offer
-/// after two rounds never counts as reaching rounds 3 and 4+.
+/// after two rounds never counts as reaching rounds 3 and up.
 struct ApplicationJourney {
     let applicationID: UUID
     /// Stages reached, in order. Empty when the application never reached Applied — it
@@ -75,7 +77,7 @@ struct ApplicationJourney {
     /// First observed entry into each stage. Inferred timeline entries are left out: their
     /// dates are reconstructed, and durations built on them would be fiction.
     let stageEntryDates: [FunnelStage: Date]
-    /// Dates of rounds that have happened, oldest first. Unlike the stages, not capped at 4.
+    /// Dates of rounds that have happened, oldest first. Unlike the stages, not capped at 5.
     let roundDates: [Date]
     let hasInferredHistory: Bool
     let fitScore: Double?
@@ -136,8 +138,8 @@ struct ApplicationJourney {
             if everScreen || roundCount > 0 || everOffer {
                 stages.append(.screen)
             }
-            // Round 4+ is one stage however many rounds followed the third.
-            stages += (0..<min(roundCount, 4)).map { .round($0 + 1) }
+            // Round 5+ is one stage however many rounds followed the fourth.
+            stages += (0..<min(roundCount, 5)).map { .round($0 + 1) }
             if everOffer { stages.append(.offer) }
         }
         reachedStages = stages
@@ -170,7 +172,7 @@ struct ApplicationJourney {
         if rounds.isEmpty {
             entries[.round1] = firstObserved(raw: ApplicationStatus.legacyRoundRawValues)
         } else {
-            for (index, date) in roundDates.prefix(4).enumerated() {
+            for (index, date) in roundDates.prefix(5).enumerated() {
                 entries[.round(index + 1)] = date
             }
         }

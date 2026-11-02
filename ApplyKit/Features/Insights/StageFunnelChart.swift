@@ -41,10 +41,14 @@ struct StageFunnelChart: View {
                     }
                 }
             }
+            InsightsCategoryLabels(labels: stageLabels, gutter: 64)
         }
-        .chartYScale(domain: insights.reached.map(\.stage.label))
+        .chartYScale(domain: stageLabels)
+        // Headroom so the total after the longest bar isn't clipped.
+        .chartXScale(domain: 0...xUpperBound)
         .chartForegroundStyleScale(domain: FunnelOutcome.styleDomain, range: FunnelOutcome.styleRange)
         .chartYSelection(value: $selectedStage)
+        .insightsCategoryGutter(64)
         .chartXAxis {
             AxisMarks { _ in
                 AxisGridLine().foregroundStyle(.quaternary)
@@ -54,6 +58,12 @@ struct StageFunnelChart: View {
         .chartLegend(position: .bottom, alignment: .leading)
         .frame(height: CGFloat(insights.reached.count) * 34 + 50)
     }
+
+    private var xUpperBound: Double {
+        Double(insights.reached.map(\.count).max() ?? 1) * 1.2
+    }
+
+    private var stageLabels: [String] { insights.reached.map(\.stage.label) }
 
     /// The total sits after the last segment of each bar, so it lines up with the bar's end.
     private func isLastSegment(_ segment: ApplicationInsights.FunnelSegment) -> Bool {

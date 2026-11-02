@@ -116,12 +116,19 @@ final class ApplicationInsightsTests: XCTestCase {
         XCTAssertEqual(ApplicationJourney(app, now: now).reachedStages, [.applied, .screen, .round1, .round2, .offer])
     }
 
-    func testFiveRoundsFoldIntoRoundFourPlus() {
+    func testFourRoundsStopAtRoundFour() {
         var app = application(appliedDaysAgo: 60)
-        for days in [50.0, 40, 30, 20, 10] { app.recordInterviewStep(round(days)) }
+        for days in [50.0, 40, 30, 20] { app.recordInterviewStep(round(days)) }
+        XCTAssertEqual(ApplicationJourney(app, now: now).furthestStage, .round4)
+    }
+
+    func testSixRoundsFoldIntoRoundFivePlus() {
+        var app = application(appliedDaysAgo: 70)
+        for days in [60.0, 50, 40, 30, 20, 10] { app.recordInterviewStep(round(days)) }
         let journey = ApplicationJourney(app, now: now)
-        XCTAssertEqual(journey.furthestStage, .round4Plus)
-        XCTAssertEqual(journey.roundDates.count, 5)
+        XCTAssertEqual(journey.furthestStage, .round5Plus)
+        XCTAssertEqual(journey.reachedStages, [.applied, .screen, .round1, .round2, .round3, .round4, .round5Plus])
+        XCTAssertEqual(journey.roundDates.count, 6)
     }
 
     func testRejectionWithoutAnAppliedEventStillEntersTheFunnel() {

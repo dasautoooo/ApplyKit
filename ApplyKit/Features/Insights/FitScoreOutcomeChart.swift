@@ -14,18 +14,23 @@ struct FitScoreOutcomeChart: View {
         if insights.fitPoints.isEmpty {
             InsightsEmptyChart(message: "No applied-to roles have a fit score yet. Run the Resume Tailor's brief to get one.", height: InsightsLayout.gridChartHeight)
         } else {
-            Chart(insights.fitPoints) { point in
-                PointMark(
-                    x: .value("Fit score", point.fitScore),
-                    y: .value("Furthest stage", point.stage.label)
-                )
-                .foregroundStyle(by: .value("Outcome", point.outcome.label))
-                .symbolSize(60)
-                // Identical scores at the same stage would otherwise sit on one spot.
-                .offset(y: Self.jitter(point.id))
+            Chart {
+                ForEach(insights.fitPoints) { point in
+                    PointMark(
+                        x: .value("Fit score", point.fitScore),
+                        y: .value("Furthest stage", point.stage.label)
+                    )
+                    .foregroundStyle(by: .value("Outcome", point.outcome.label))
+                    .symbolSize(60)
+                    // Identical scores at the same stage would otherwise sit on one spot.
+                    .offset(y: Self.jitter(point.id))
+                }
+                InsightsCategoryLabels(labels: Self.stageLabels, gutter: 64)
             }
-            .chartXScale(domain: 0...10)
-            .chartYScale(domain: FunnelStage.allCases.reversed().map(\.label))
+            // Room past 10 for its tick label, which is dropped when it would overhang the plot.
+            .chartXScale(domain: 0...10, range: .plotDimension(endPadding: 12))
+            .chartYScale(domain: Self.stageLabels)
+            .insightsCategoryGutter(64)
             // A point is where an application ended up, so "Advanced" never applies here.
             .chartForegroundStyleScale(
                 domain: Self.outcomes.map(\.label),
@@ -41,6 +46,8 @@ struct FitScoreOutcomeChart: View {
             .frame(height: InsightsLayout.gridChartHeight)
         }
     }
+
+    private static let stageLabels = FunnelStage.allCases.reversed().map(\.label)
 
     private static let outcomes = FunnelOutcome.allCases.filter { $0 != .advanced }
 

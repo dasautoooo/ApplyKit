@@ -4,6 +4,7 @@
 //
 
 import AppKit
+import Charts
 import SwiftUI
 
 /// Chrome shared by every chart on the Insights dashboard.
@@ -69,6 +70,41 @@ struct InsightsCard<Content: View>: View {
 enum InsightsLayout {
     /// Plot height shared by the charts in the grid, so side-by-side cards line up.
     static let gridChartHeight: CGFloat = 240
+}
+
+/// Category names for a chart whose y axis is a list of categories, drawn in a gutter left
+/// of the plot and centered on their row. Stands in for the y axis, whose labels on a
+/// categorical scale anchor to the row's top edge and run into the marks. Pair with
+/// `.insightsCategoryGutter(_:)`, which hides that axis and makes the room.
+struct InsightsCategoryLabels: ChartContent {
+    let labels: [String]
+    let gutter: CGFloat
+
+    private static let spacing: CGFloat = 8
+
+    var body: some ChartContent {
+        ForEach(labels, id: \.self) { label in
+            // An invisible point at the plot's leading edge, just to hang the label on.
+            PointMark(x: .value("Origin", 0.0), y: .value("Category", label))
+                .symbolSize(0)
+                .annotation(position: .leading, alignment: .trailing, spacing: Self.spacing,
+                            overflowResolution: .init(x: .disabled, y: .disabled)) {
+                    Text(label)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: gutter - Self.spacing, alignment: .trailing)
+                }
+        }
+    }
+}
+
+extension View {
+    /// Hides the y axis and leaves `width` of room for `InsightsCategoryLabels`.
+    func insightsCategoryGutter(_ width: CGFloat) -> some View {
+        chartYAxis(.hidden)
+            .chartPlotStyle { $0.padding(.leading, width) }
+    }
 }
 
 /// Shown in place of a chart that has nothing to plot yet.

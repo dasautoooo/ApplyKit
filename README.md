@@ -20,7 +20,7 @@ Recruiter Screen and Interviewing follow the Interview Process. Logging a screen
 
 **Insights**: how applications move through the pipeline, computed live from the workspace. KPI tiles (applied, response, interview, and offer rates, median days to a reply) over a stage funnel, a Sankey flow, the current pipeline, weekly activity, time to response, and fit score vs outcome. The whole dashboard (toolbar Share) or any single chart (the card's share button) can be shared through the system share menu, copied, or saved as PNG or PDF; exports render light on white.
 - Applied: has an applied date, an Applied status in its history, or a later stage (Rejected and Ghosted included). Saved, or withdrawn before applying, doesn't count.
-- Stages run Applied → Screen → Round 1–4+ → Offer. Reaching a stage counts every stage before it, and Offer can follow any round.
+- Stages run Applied → Screen → Round 1–5+ → Offer. Reaching a stage counts every stage before it, and Offer can follow any round.
 - Archived applications count, since rejections usually get archived.
 - A step still in Scheduling counts toward reach only if it's a screen, and never toward dates. History reconstructed for older applications counts toward reach but not toward durations.
 - The date range filters by applied date, or saved date if never applied. Refresh (⌘R) re-anchors "now".
