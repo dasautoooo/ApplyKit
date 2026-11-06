@@ -6,8 +6,9 @@
 import SwiftUI
 
 /// Stage-to-stage flow with drop-offs. Swift Charts has no Sankey mark, so this is drawn with
-/// a Canvas: pipeline stages run left to right, and whatever doesn't advance from a stage
-/// peels off downward into that stage's outcome nodes (Offer, Still active, Rejected, ...).
+/// a Canvas: pipeline stages run left to right ending in Offer, which any stage can feed, and
+/// whatever neither advances nor gets an offer peels off downward into that stage's outcome
+/// nodes (Still active, Rejected, ...).
 struct FlowSankeyView: View {
     let insights: ApplicationInsights
     @State private var hoveredFlowID: String?
@@ -120,10 +121,13 @@ struct SankeyLayout {
         return nil
     }
 
-    private static func hitBands(from x0: CGFloat, y: CGFloat, to x1: CGFloat, ty: CGFloat) -> [Path] {
-        let mid = (x0 + x1) / 2
+    private static func hitBands(from x0: CGFloat, y: CGFloat, bendingAt bend: CGFloat? = nil,
+                                 to x1: CGFloat, ty: CGFloat) -> [Path] {
+        let start = max(bend ?? x0, x0)
+        let mid = (start + x1) / 2
         var centre = Path()
         centre.move(to: CGPoint(x: x0, y: y))
+        centre.addLine(to: CGPoint(x: start, y: y))
         centre.addCurve(to: CGPoint(x: x1, y: ty), control1: CGPoint(x: mid, y: y), control2: CGPoint(x: mid, y: ty))
         return hitTolerances.map { centre.strokedPath(StrokeStyle(lineWidth: $0 * 2, lineCap: .butt)) }
     }
@@ -155,15 +159,46 @@ struct SankeyLayout {
     }
 
     init(insights: ApplicationInsights, width: CGFloat) {
-        // Offer isn't a column: it branches off whichever stage it came from.
+        // Offer is the final column, after the pipeline stages, fed from whichever stage each
+        // offer followed.
         let stages = insights.reached.filter { $0.stage != .offer }
         guard !stages.isEmpty else { return }
+        let offerCount = insights.reached.first { $0.stage == .offer }?.count
         let scale = Self.scale(for: insights)
-        // Room on the right for the last stage's outcome nodes and their labels.
-        let column = (width - Self.nodeWidth - 150) / CGFloat(max(stages.count - 1, 1))
+        // Room on the right for the last column's labels: the last stage's outcome nodes when
+        // it's the last column, or the Offer label plus whatever of them pokes past it.
+        let columns = stages.count - 1 + (offerCount == nil ? 0 : 1)
+        let margin: CGFloat = offerCount == nil ? 150 : 90
+        let column = (width - Self.nodeWidth - margin) / CGFloat(max(columns, 1))
         let exitTop = Self.labelTop + Self.mainHeight + 28
 
         func x(_ index: Int) -> CGFloat { CGFloat(index) * column }
+
+        // Offer ribbons keep their height until past the last stage, then bend into the Offer
+        // node. Stage nodes only shrink to the right, so a ribbon leaving below one stage's
+        // advancing flow clears every later node. Stacked latest stage on top so the bends
+        // never cross.
+        let offerX = x(stages.count)
+        let bendX = x(stages.count - 1) + Self.nodeWidth
+        var offerSlots: [FunnelStage: CGFloat] = [:]
+        if let offerCount {
+            var y = Self.labelTop
+            let offerFlows = insights.flows.filter { $0.to == .stage(.offer) }
+            for flow in offerFlows.sorted(by: { $0.from > $1.from }) {
+                offerSlots[flow.from] = y
+                y += CGFloat(flow.count) * scale
+            }
+            let rect = CGRect(x: offerX, y: Self.labelTop, width: Self.nodeWidth,
+                              height: max(CGFloat(offerCount) * scale, Self.minNodeHeight))
+            nodes.append(Node(
+                rect: rect,
+                color: FunnelOutcome.offer.color,
+                label: FunnelStage.offer.label,
+                count: offerCount,
+                labelPoint: CGPoint(x: rect.minX, y: Self.labelTop - 4),
+                labelAnchor: .bottomLeading
+            ))
+        }
 
         for (index, entry) in stages.enumerated() {
             let rect = CGRect(x: x(index), y: Self.labelTop, width: Self.nodeWidth,
@@ -177,10 +212,10 @@ struct SankeyLayout {
                 labelAnchor: .bottomLeading
             ))
 
-            // Stacked inside the node: advancing flow on top, then each way out.
+            // Stacked inside the node: advancing flow on top, then offers, then each way out.
             var sourceY = rect.minY
             let outgoing = insights.flows.filter { $0.from == entry.stage }
-            if let advance = outgoing.first(where: { if case .stage = $0.to { true } else { false } }),
+            if let advance = outgoing.first(where: { if case .stage(let next) = $0.to { next != .offer } else { false } }),
                index + 1 < stages.count {
                 let height = CGFloat(advance.count) * scale
                 let target = CGRect(x: x(index + 1), y: Self.labelTop, width: Self.nodeWidth, height: height)
@@ -191,6 +226,20 @@ struct SankeyLayout {
                     color: FunnelOutcome.advanced.color,
                     hitBands: Self.hitBands(from: rect.maxX, y: sourceY + height / 2,
                                             to: target.minX, ty: target.midY)
+                ))
+                sourceY += height
+            }
+
+            if let offer = outgoing.first(where: { $0.to == .stage(.offer) }),
+               let targetTop = offerSlots[entry.stage] {
+                let height = CGFloat(offer.count) * scale
+                ribbons.append(Ribbon(
+                    flow: offer,
+                    path: Self.band(from: rect.maxX, y0: sourceY, y1: sourceY + height, bendingAt: bendX,
+                                    to: offerX, ty0: targetTop, ty1: targetTop + height),
+                    color: FunnelOutcome.offer.color,
+                    hitBands: Self.hitBands(from: rect.maxX, y: sourceY + height / 2, bendingAt: bendX,
+                                            to: offerX, ty: targetTop + height / 2)
                 ))
                 sourceY += height
             }
@@ -225,17 +274,21 @@ struct SankeyLayout {
         }
     }
 
-    /// A ribbon whose two edges are matching S-curves between a source and a target band.
-    private static func band(from x0: CGFloat, y0: CGFloat, y1: CGFloat,
+    /// A ribbon whose two edges are matching S-curves between a source and a target band,
+    /// running straight from the source until `bend` when one is given.
+    private static func band(from x0: CGFloat, y0: CGFloat, y1: CGFloat, bendingAt bend: CGFloat? = nil,
                              to x1: CGFloat, ty0: CGFloat, ty1: CGFloat) -> Path {
-        let mid = (x0 + x1) / 2
+        let start = max(bend ?? x0, x0)
+        let mid = (start + x1) / 2
         var path = Path()
         path.move(to: CGPoint(x: x0, y: y0))
+        path.addLine(to: CGPoint(x: start, y: y0))
         path.addCurve(to: CGPoint(x: x1, y: ty0),
                       control1: CGPoint(x: mid, y: y0), control2: CGPoint(x: mid, y: ty0))
         path.addLine(to: CGPoint(x: x1, y: ty1))
-        path.addCurve(to: CGPoint(x: x0, y: y1),
+        path.addCurve(to: CGPoint(x: start, y: y1),
                       control1: CGPoint(x: mid, y: ty1), control2: CGPoint(x: mid, y: y1))
+        path.addLine(to: CGPoint(x: x0, y: y1))
         path.closeSubpath()
         return path
     }

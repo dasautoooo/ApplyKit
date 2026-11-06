@@ -89,10 +89,6 @@ struct ApplicationJourney {
     /// The last stage before any offer: where the application sits in the pipeline.
     var lastPipelineStage: FunnelStage? { reachedStages.last { $0 != .offer } }
 
-    /// Where it went from its last pipeline stage. An offer counts as one, however it ended;
-    /// otherwise the outcome it's sitting in.
-    var pipelineExit: FunnelOutcome { reachedOffer ? .offer : outcome }
-
     init(_ application: JobApplication, now: Date) {
         applicationID = application.id
         fitScore = application.fitScore
@@ -327,8 +323,9 @@ struct ApplicationInsights {
             return total > 0 ? (stage, total) : nil
         }
 
-        // Sankey flows run along the pipeline stages, which are always contiguous; an offer
-        // leaves as an outcome of the stage it came from, so no ribbon has to skip a column.
+        // Sankey flows run along the pipeline stages, which are always contiguous. Offer is the
+        // final column, fed from whichever stage the offer followed, so its ribbons can skip
+        // columns. It's terminal: however an offer ended, nothing flows out of it.
         var flowCounts: [FlowKey: Int] = [:]
         for journey in inFunnel {
             let pipeline = journey.reachedStages.filter { $0 != .offer }
@@ -336,11 +333,12 @@ struct ApplicationInsights {
                 flowCounts[FlowKey(from: stage, to: .stage(next)), default: 0] += 1
             }
             if let last = pipeline.last {
-                flowCounts[FlowKey(from: last, to: .outcome(journey.pipelineExit)), default: 0] += 1
+                let target: FlowTarget = journey.reachedOffer ? .stage(.offer) : .outcome(journey.outcome)
+                flowCounts[FlowKey(from: last, to: target), default: 0] += 1
             }
         }
         let targetOrder: [FlowTarget] = FunnelStage.allCases.map { .stage($0) }
-            + ([.offer, .active] + FunnelOutcome.exits).map { .outcome($0) }
+            + ([.active] + FunnelOutcome.exits).map { .outcome($0) }
         flows = FunnelStage.allCases.flatMap { stage in
             targetOrder.compactMap { target in
                 flowCounts[FlowKey(from: stage, to: target)].map { Flow(from: stage, to: target, count: $0) }

@@ -216,14 +216,28 @@ final class ApplicationInsightsTests: XCTestCase {
     func testFlowsLeavingAStageMatchTheFunnel() {
         let insights = ApplicationInsights(applications: fixture(), now: now)
 
-        // Offer is a Sankey outcome, not a column, so every other stage's reach leaves it.
+        // Offer is the terminal column, so every other stage's reach leaves it.
         for (stage, reached) in insights.reached where stage != .offer {
             let outgoing = insights.flows.filter { $0.from == stage }.reduce(0) { $0 + $1.count }
             XCTAssertEqual(outgoing, reached, "\(stage.label)")
         }
         XCTAssertFalse(insights.flows.contains { $0.from == .offer })
-        let offerFlows = insights.flows.filter { $0.to == .outcome(.offer) }
+        let offerFlows = insights.flows.filter { $0.to == .stage(.offer) }
         XCTAssertEqual(offerFlows.map(\.from), [.round2])
+    }
+
+    func testOfferIsTheLastSankeyColumnNotAnOutcome() throws {
+        let insights = ApplicationInsights(applications: fixture(), now: now)
+        let layout = SankeyLayout(insights: insights, width: 900)
+
+        let columns = layout.nodes.filter { $0.labelAnchor == .bottomLeading }
+        XCTAssertEqual(columns.map(\.label), ["Offer", "Applied", "Screen", "Round 1", "Round 2"])
+        let offer = try XCTUnwrap(columns.first)
+        XCTAssertEqual(offer.rect.minX, columns.map(\.rect.minX).max())
+        XCTAssertFalse(layout.nodes.contains { $0.labelAnchor == .leading && $0.label == "Offer" })
+
+        let ribbon = try XCTUnwrap(layout.ribbons.first { $0.flow.to == .stage(.offer) })
+        XCTAssertEqual(ribbon.path.boundingRect.maxX, offer.rect.minX, accuracy: 0.5)
     }
 
     func testKPIs() throws {
