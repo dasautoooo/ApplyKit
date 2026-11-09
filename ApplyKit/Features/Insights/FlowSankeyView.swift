@@ -12,15 +12,9 @@ import SwiftUI
 struct FlowSankeyView: View {
     let insights: ApplicationInsights
     /// What the pointer is over, updated on every move: drives the highlight and the caption.
+    /// Resting on it opens a popover listing its applications.
     @State private var hovered: SankeyHoverTarget?
-    /// The popover listing the hovered target's applications, shown once the pointer rests.
-    @State private var popover: FlowPopover?
-    @State private var restTask: Task<Void, Never>?
     @Environment(\.isInsightsExport) private var isExport
-
-    /// How long the pointer has to rest before the popover opens, like a help tag: sweeping
-    /// across the graph shouldn't open and close a popover per ribbon.
-    private static let restDelay = Duration.milliseconds(150)
 
     var body: some View {
         if insights.reached.isEmpty {
@@ -32,16 +26,8 @@ struct FlowSankeyView: View {
                     Canvas { context, _ in
                         draw(layout, in: &context)
                     }
-                    .onContinuousHover { phase in
-                        switch phase {
-                        case .active(let point): pointerMoved(to: point, in: layout)
-                        case .ended: pointerLeft()
-                        }
-                    }
-                    .popover(item: $popover,
-                             attachmentAnchor: .rect(.rect(popover?.anchor ?? .zero)),
-                             arrowEdge: .bottom) { popover in
-                        FlowPopoverContent(insights: insights, target: popover.target)
+                    .insightsHoverPopover(hovered: $hovered, hitTest: layout.target(at:)) { target in
+                        FlowPopoverContent(insights: insights, target: target)
                     }
                 }
                 .frame(height: SankeyLayout.height(for: insights))
@@ -53,35 +39,7 @@ struct FlowSankeyView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .onDisappear { restTask?.cancel() }
         }
-    }
-
-    // MARK: Hover
-
-    /// Moving onto something else closes the popover; resting on a target opens one pointing
-    /// at where the pointer stopped. The popover opens below that point and never under the
-    /// pointer, so it can't cover what it describes and flicker.
-    private func pointerMoved(to point: CGPoint, in layout: SankeyLayout) {
-        guard !isExport else { return }
-        let target = layout.target(at: point)
-        if target != hovered {
-            hovered = target
-            popover = nil
-        }
-        restTask?.cancel()
-        guard let target, popover == nil else { return }
-        restTask = Task {
-            try? await Task.sleep(for: Self.restDelay)
-            guard !Task.isCancelled, hovered == target else { return }
-            popover = FlowPopover(target: target, anchor: CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8))
-        }
-    }
-
-    private func pointerLeft() {
-        restTask?.cancel()
-        hovered = nil
-        popover = nil
     }
 
     // MARK: Drawing
@@ -116,13 +74,6 @@ enum SankeyHoverTarget: Hashable {
     case stage(FunnelStage)
 }
 
-private struct FlowPopover: Identifiable {
-    let id = UUID()
-    let target: SankeyHoverTarget
-    /// Where the pointer came to rest, in the graph's coordinates.
-    let anchor: CGRect
-}
-
 /// The applications behind one ribbon or stage, laid out like a standard macOS popover: a
 /// title and summary over a plain two-line list.
 private struct FlowPopoverContent: View {
@@ -137,52 +88,13 @@ private struct FlowPopoverContent: View {
         let shown = isCapped ? Array(members.prefix(Self.cappedRowCount)) : members
         let hidden = members.count - shown.count
 
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.headline)
-                Text(detail)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
-
-            Divider()
-                .padding(.horizontal, 14)
-
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(shown, id: \.applicationID) { member in
-                    row(member)
-                }
-                if hidden > 0 {
-                    Text("\(hidden) more")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 10)
-            .padding(.bottom, 12)
-        }
-        .frame(width: 280, alignment: .leading)
-    }
-
-    private func row(_ member: ApplicationJourney) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(member.companyName.trimmed.isEmpty ? "Untitled" : member.companyName)
-                Text(member.jobTitle.trimmed.isEmpty ? "No role" : member.jobTitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .lineLimit(1)
-            Spacer(minLength: 0)
-            if member.isArchived {
-                Text("Archived")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        InsightsPopoverList(title: title, detail: detail, footer: hidden > 0 ? "\(hidden) more" : nil) {
+            ForEach(shown, id: \.applicationID) { member in
+                InsightsPopoverRow(
+                    primary: member.companyName.trimmed.isEmpty ? "Untitled" : member.companyName,
+                    secondary: member.jobTitle.trimmed.isEmpty ? "No role" : member.jobTitle,
+                    trailing: member.isArchived ? "Archived" : nil
+                )
             }
         }
     }

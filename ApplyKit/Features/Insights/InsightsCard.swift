@@ -76,26 +76,50 @@ enum InsightsLayout {
 /// of the plot and centered on their row. Stands in for the y axis, whose labels on a
 /// categorical scale anchor to the row's top edge and run into the marks. Pair with
 /// `.insightsCategoryGutter(_:)`, which hides that axis and makes the room.
-struct InsightsCategoryLabels: ChartContent {
-    let labels: [String]
+struct InsightsCategoryLabels<Origin: Plottable, Position: Plottable>: ChartContent {
+    /// Each label and the y value its row is centered on: the category itself on a
+    /// categorical axis, a number when rows are laid out by hand.
+    let rows: [(label: String, position: Position)]
     let gutter: CGFloat
+    /// The x value at the plot's leading edge; a date on a time axis.
+    let origin: Origin
 
-    private static let spacing: CGFloat = 8
+    private static var spacing: CGFloat { 8 }
+
+    init(rows: [(label: String, position: Position)], gutter: CGFloat, origin: Origin) {
+        self.rows = rows
+        self.gutter = gutter
+        self.origin = origin
+    }
 
     var body: some ChartContent {
-        ForEach(labels, id: \.self) { label in
+        ForEach(rows.indices, id: \.self) { index in
             // An invisible point at the plot's leading edge, just to hang the label on.
-            PointMark(x: .value("Origin", 0.0), y: .value("Category", label))
+            PointMark(x: .value("Origin", origin), y: .value("Category", rows[index].position))
                 .symbolSize(0)
                 .annotation(position: .leading, alignment: .trailing, spacing: Self.spacing,
                             overflowResolution: .init(x: .disabled, y: .disabled)) {
-                    Text(label)
+                    Text(rows[index].label)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.trailing)
                         .frame(width: gutter - Self.spacing, alignment: .trailing)
                 }
         }
+    }
+}
+
+extension InsightsCategoryLabels where Position == String {
+    /// For a categorical y axis, where each label is its own row.
+    init(labels: [String], gutter: CGFloat, origin: Origin) {
+        self.init(rows: labels.map { ($0, $0) }, gutter: gutter, origin: origin)
+    }
+}
+
+extension InsightsCategoryLabels where Origin == Double, Position == String {
+    /// For a categorical y axis over a numeric x axis starting at zero.
+    init(labels: [String], gutter: CGFloat) {
+        self.init(labels: labels, gutter: gutter, origin: 0)
     }
 }
 
@@ -154,4 +178,23 @@ extension ApplicationInsights.SnapshotCategory {
         case .withdrawn: FunnelOutcome.withdrawn.color
         }
     }
+}
+
+extension InterviewInsights.StepOutcome {
+    /// Matches the funnel: a pass reads as advancing, a cut as a rejection, a wait as still active.
+    var color: Color {
+        switch self {
+        case .passed: FunnelOutcome.advanced.color
+        case .didNotAdvance: FunnelOutcome.rejected.color
+        case .pending: FunnelOutcome.active.color
+        }
+    }
+
+    static var styleDomain: [String] { allCases.map(\.label) }
+    static var styleRange: [Color] { allCases.map(\.color) }
+}
+
+extension InterviewInsights {
+    /// Steps that haven't happened yet, wherever they're drawn.
+    static var upcomingColor: Color { .gray }
 }

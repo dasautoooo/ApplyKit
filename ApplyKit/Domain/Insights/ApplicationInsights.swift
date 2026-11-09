@@ -307,6 +307,8 @@ struct ApplicationInsights {
     let fitPoints: [FitPoint]
     /// Applications in the funnel whose history is partly reconstructed.
     let inferredCount: Int
+    /// The interview steps themselves: round types, per-company timelines, weekly load.
+    let interviews: InterviewInsights
 
     init(applications: [JobApplication], now: Date = Date()) {
         let all = applications.map { ApplicationJourney($0, now: now) }
@@ -421,6 +423,7 @@ struct ApplicationInsights {
         }
 
         inferredCount = inFunnel.filter(\.hasInferredHistory).count
+        interviews = InterviewInsights(applications: applications, now: now)
     }
 
     private static func byCompanyThenRole(_ lhs: ApplicationJourney, _ rhs: ApplicationJourney) -> Bool {

@@ -135,6 +135,7 @@ private struct InsightsDashboardBody: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             InsightsKPIRow(kpis: insights.kpis)
+            InterviewKPIRow(interviews: insights.interviews)
 
             InsightsCard(
                 title: "Funnel",
@@ -149,6 +150,11 @@ private struct InsightsDashboardBody: View {
             InsightsCard(title: "Flow", subtitle: "Where applications went from each stage",
                          exportWidth: 1000, isExport: isExport) {
                 FlowSankeyView(insights: insights)
+            }
+
+            InsightsCard(title: "Interview timelines", subtitle: "Each company's interview steps over time",
+                         exportWidth: 1000, isExport: isExport) {
+                InterviewTimelineChart(interviews: insights.interviews)
             }
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 16, alignment: .top)],
@@ -176,6 +182,18 @@ private struct InsightsDashboardBody: View {
                 InsightsCard(title: "Fit score vs outcome", subtitle: "Furthest stage reached by the tailor's fit score",
                              isExport: isExport) {
                     FitScoreOutcomeChart(insights: insights)
+                }
+                InsightsCard(title: "Pass rate by round type", subtitle: "How each kind of step went, once it happened",
+                             isExport: isExport) {
+                    RoundTypeOutcomeChart(interviews: insights.interviews)
+                }
+                InsightsCard(
+                    title: "Interview load",
+                    subtitle: "Hours of interviews per week, scheduled ones included",
+                    footnote: "Steps without a length count as 30 min for a screen, 1 h for a round.",
+                    isExport: isExport
+                ) {
+                    InterviewLoadChart(interviews: insights.interviews)
                 }
             }
         }
@@ -205,7 +223,10 @@ private enum InsightsPreviewData {
             for round in rounds {
                 application.recordInterviewStep(ApplicationEvent(
                     date: daysAgo(round.days), kind: .interview,
-                    interviewTypeRaw: round.type.rawValue, interviewResultRaw: round.result.rawValue
+                    interviewTypeRaw: round.type.rawValue, interviewResultRaw: round.result.rawValue,
+                    interview: InterviewDetails(durationMinutes: round.type == .onsite ? 240 : 60,
+                                                formatRaw: InterviewFormat.video.rawValue,
+                                                interviewers: "Sam Rivera")
                 ))
             }
             for step in steps {
@@ -229,9 +250,10 @@ private enum InsightsPreviewData {
             make("Fabrikam", fit: 6.0, applied: 45, steps: [(30, .rejected)]),
             make("Tailspin", fit: 5.5, applied: 40, steps: [(10, .ghosted)]),
             make("Litware", fit: 7.0, applied: 30, screenDaysAgo: 24,
-                 rounds: [(15, .phoneScreen, .passed), (5, .coding, .awaiting)]),
+                 rounds: [(15, .phoneScreen, .passed), (5, .coding, .passed), (4.95, .behavioral, .passed),
+                          (4.2, .hiringManager, .awaiting), (-3, .systemDesign, .scheduled)]),
             make("Adventure Works", fit: 9.0, applied: 28, screenDaysAgo: 25,
-                 rounds: [(18, .onlineAssessment, .passed)]),
+                 rounds: [(18, .onlineAssessment, .passed), (-5, .coding, .scheduled)]),
             make("Proseware", fit: 4.5, applied: 25),
             make("Wingtip", fit: nil, applied: 20, steps: [(12, .rejected)]),
             make("Woodgrove", fit: 6.5, applied: 18, screenDaysAgo: 14, steps: [(6, .withdrawn)]),
