@@ -34,10 +34,13 @@ struct InsightsKPIRow: View {
 
 /// The interview steps at a glance: how many, how long, how they went, what's next.
 struct InterviewKPIRow: View {
-    let interviews: InterviewInsights
+    let insights: ApplicationInsights
+
+    private var interviews: InterviewInsights { insights.interviews }
 
     var body: some View {
         let kpis = interviews.kpis
+        let funnel = insights.kpis
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
             InsightsKPITile(
                 title: "Interviews",
@@ -55,11 +58,25 @@ struct InterviewKPIRow: View {
                 detail: kpis.decided == 0 ? "No results yet" : "\(kpis.passed) of \(kpis.decided) decided"
             )
             InsightsKPITile(
+                title: "Interview → offer",
+                value: funnel.interviewToOfferRate.map { $0.formatted(.percent.precision(.fractionLength(0))) } ?? "–",
+                detail: conversionDetail(funnel)
+            )
+            InsightsKPITile(
                 title: "Upcoming",
                 value: "\(kpis.upcomingThisWeek)",
                 detail: kpis.next.map(nextDetail) ?? "Nothing scheduled"
             )
         }
+    }
+
+    /// "1 of 4 finished", noting how many interview loops are still undecided.
+    private func conversionDetail(_ kpis: ApplicationInsights.KPIs) -> String {
+        guard kpis.finishedAfterInterviewing > 0 else {
+            return kpis.interviewingNow > 0 ? "\(kpis.interviewingNow) still in progress" : "No interview loops yet"
+        }
+        return "\(kpis.offersAfterInterviewing) of \(kpis.finishedAfterInterviewing) finished"
+            + (kpis.interviewingNow > 0 ? " · \(kpis.interviewingNow) ongoing" : "")
     }
 
     /// The next step's company and day: a weekday within the week, a date beyond it.

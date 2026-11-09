@@ -199,8 +199,20 @@ struct ApplicationInsights {
         var interviewed = 0
         var offers = 0
         var medianDaysToResponse: Double?
+        /// Applications that reached Round 1 and whose process is over: an offer, or turned
+        /// down, ghosted, or withdrawn. Ones still in progress wait until they're decided.
+        var finishedAfterInterviewing = 0
+        /// Of those, the ones that got an offer, even an offer later declined.
+        var offersAfterInterviewing = 0
+        /// Reached Round 1 and still going.
+        var interviewingNow = 0
 
         func rate(_ count: Int) -> Double? { applied == 0 ? nil : Double(count) / Double(applied) }
+
+        /// Interview-to-offer conversion among finished processes; nil until one has finished.
+        var interviewToOfferRate: Double? {
+            finishedAfterInterviewing == 0 ? nil : Double(offersAfterInterviewing) / Double(finishedAfterInterviewing)
+        }
     }
 
     struct FunnelSegment: Identifiable {
@@ -366,6 +378,11 @@ struct ApplicationInsights {
         kpis.responded = inFunnel.filter(\.responded).count
         kpis.interviewed = inFunnel.filter { $0.reachedStages.contains(.round1) }.count
         kpis.offers = inFunnel.filter(\.reachedOffer).count
+        let interviewedJourneys = inFunnel.filter { $0.reachedStages.contains(.round1) }
+        let finished = interviewedJourneys.filter { $0.outcome != .active }
+        kpis.finishedAfterInterviewing = finished.count
+        kpis.offersAfterInterviewing = finished.filter(\.reachedOffer).count
+        kpis.interviewingNow = interviewedJourneys.count - finished.count
 
         let responseDays = inFunnel.compactMap { journey -> Double? in
             guard let applied = journey.appliedDate, let response = journey.firstResponseDate else { return nil }

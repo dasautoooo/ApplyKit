@@ -135,7 +135,7 @@ private struct InsightsDashboardBody: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             InsightsKPIRow(kpis: insights.kpis)
-            InterviewKPIRow(interviews: insights.interviews)
+            InterviewKPIRow(insights: insights)
 
             InsightsCard(
                 title: "Funnel",

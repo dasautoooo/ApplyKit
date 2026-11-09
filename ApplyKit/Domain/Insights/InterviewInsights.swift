@@ -88,9 +88,21 @@ struct InterviewInsights {
         let label: String
         /// Oldest first.
         let steps: [Step]
+        /// How the process ended, oldest first: usually nothing yet, or one offer or rejection.
+        var endings: [Ending] = []
         var id: UUID { applicationID }
         var first: Date { steps.first?.date ?? .distantPast }
-        var last: Date { steps.last?.date ?? .distantPast }
+        /// The latest step, or the ending when it came after.
+        var last: Date { ([steps.last?.date].compactMap { $0 } + endings.map(\.date)).max() ?? .distantPast }
+        var offerDate: Date? { endings.first { $0.kind == .offer }?.date }
+    }
+
+    /// Where a process ended. These aren't steps — they're statuses — but they're where the
+    /// steps lead, so the timeline shows them.
+    struct Ending {
+        enum Kind { case offer, rejected }
+        let kind: Kind
+        let date: Date
     }
 
     struct KPIs {
@@ -121,7 +133,9 @@ struct InterviewInsights {
     init(applications: [JobApplication], now: Date, calendar: Calendar = .current) {
         self.now = now
         var steps: [Step] = []
+        var endings: [UUID: [Ending]] = [:]
         for application in applications {
+            endings[application.id] = Self.endings(of: application)
             for event in application.interviewSteps where event.hasScheduledTime {
                 steps.append(Step(
                     id: event.id,
@@ -162,7 +176,8 @@ struct InterviewInsights {
             let shared = (companyCounts[first.companyName.lowercased()] ?? 0) > 1
             let role = first.jobTitle.trimmed
             let label = shared && !role.isEmpty ? "\(first.companyName) · \(role)" : first.companyName
-            return Process(applicationID: first.applicationID, label: label, steps: steps)
+            return Process(applicationID: first.applicationID, label: label, steps: steps,
+                           endings: endings[first.applicationID] ?? [])
         }
         .sorted { $0.last > $1.last }
 
@@ -177,6 +192,23 @@ struct InterviewInsights {
         kpis.upcomingThisWeek = upcoming.filter { $0.date <= weekAhead }.count
         kpis.next = upcoming.first
         self.kpis = kpis
+    }
+
+    /// An offer whenever one was made, even if it was later declined; a rejection only while
+    /// the application stands rejected, so one reopened since doesn't read as over.
+    private static func endings(of application: JobApplication) -> [Ending] {
+        func moves(to status: ApplicationStatus) -> [Date] {
+            application.timeline
+                .filter { $0.isStatusChange && ApplicationStatus.stored($0.toStatusRaw) == status }
+                .map(\.date)
+        }
+        var endings: [Ending] = []
+        if let offer = moves(to: .offer).min() { endings.append(Ending(kind: .offer, date: offer)) }
+        // The latest rejection: the one that stands, if it was ever reopened and closed again.
+        if ApplicationStatus.stored(application.statusRaw) == .rejected, let rejected = moves(to: .rejected).max() {
+            endings.append(Ending(kind: .rejected, date: rejected))
+        }
+        return endings.sorted { $0.date < $1.date }
     }
 
     /// "4" or "4.5": hours to at most one decimal.

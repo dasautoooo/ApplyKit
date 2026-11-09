@@ -145,10 +145,10 @@ final class InterviewInsightsTests: XCTestCase {
 
         let acme = try XCTUnwrap(layout.rows.first { $0.process.label == "Acme" })
         let beta = try XCTUnwrap(layout.rows.first { $0.process.label == "Beta" })
-        let acmeDots = layout.dots.filter { $0.step.companyName == "Acme" }
+        let acmeDots = layout.dots.filter { $0.step?.companyName == "Acme" }
         XCTAssertEqual(acmeDots.map(\.lane), [0, 0, 1, 2], "the lone early step stays on the line")
         XCTAssertEqual(Set(acmeDots.map(\.y)).count, 3, "the three close steps each get their own height")
-        XCTAssertTrue(layout.dots.filter { $0.step.companyName == "Beta" }.allSatisfy { $0.y == beta.center })
+        XCTAssertTrue(layout.dots.filter { $0.step?.companyName == "Beta" }.allSatisfy { $0.y == beta.center })
 
         // The crowded row grows to fit its lanes; the spread-out one keeps the standard height.
         XCTAssertEqual(layout.height, (acme.center * 2) + InterviewTimelineLayout.rowHeight, accuracy: 0.001)
@@ -159,5 +159,48 @@ final class InterviewInsightsTests: XCTestCase {
         let offsets = (0..<5).map(InterviewTimelineLayout.offset(ofLane:))
         let spacing = InterviewTimelineLayout.laneSpacing
         XCTAssertEqual(offsets, [0, -spacing, spacing, -2 * spacing, 2 * spacing])
+    }
+
+    func testAnOfferEndsTheProcessOnTheTimeline() throws {
+        var offered = application("Acme")
+        offered.recordInterviewStep(step(.coding, .passed, at: -40))
+        offered.recordInterviewStep(step(.onsite, .passed, at: -30))
+        offered.setStatus(rawValue: ApplicationStatus.offer.rawValue, at: days(-20))
+        var later = application("Beta")
+        later.recordInterviewStep(step(.coding, .passed, at: -25))
+
+        let result = insights([offered, later])
+        let acme = try XCTUnwrap(result.processes.first { $0.label == "Acme" })
+        XCTAssertEqual(acme.offerDate, days(-20))
+        XCTAssertEqual(acme.last, days(-20), "the line runs to the offer, past the last step")
+        XCTAssertEqual(result.processes.map(\.label), ["Acme", "Beta"], "the offer is its latest activity")
+        XCTAssertNil(result.processes.first { $0.label == "Beta" }?.offerDate)
+
+        let layout = InterviewTimelineLayout(processes: result.processes, domain: days(-45)...days(5), plotWidth: 500)
+        let offers = layout.dots.filter { $0.step == nil }
+        XCTAssertEqual(offers.count, 1)
+        XCTAssertEqual(offers.first?.marker.date, days(-20))
+    }
+
+    func testARejectionEndsTheProcessOnlyWhileItStands() throws {
+        var rejected = application("Acme")
+        rejected.recordInterviewStep(step(.coding, .awaiting, at: -30))
+        rejected.setStatus(rawValue: ApplicationStatus.rejected.rawValue, at: days(-25))
+        var reopened = application("Beta")
+        reopened.recordInterviewStep(step(.coding, .passed, at: -30))
+        reopened.setStatus(rawValue: ApplicationStatus.rejected.rawValue, at: days(-25))
+        reopened.setStatus(rawValue: ApplicationStatus.interviewing.rawValue, at: days(-20))
+        reopened.recordInterviewStep(step(.onsite, .awaiting, at: -15))
+
+        let processes = insights([rejected, reopened]).processes
+        let acme = try XCTUnwrap(processes.first { $0.label == "Acme" })
+        XCTAssertEqual(acme.endings.map(\.kind), [.rejected])
+        XCTAssertEqual(acme.endings.first?.date, days(-25))
+        XCTAssertEqual(acme.last, days(-25), "the line runs to the rejection")
+        XCTAssertTrue(try XCTUnwrap(processes.first { $0.label == "Beta" }).endings.isEmpty,
+                      "reopened since, so it hasn't ended")
+
+        let layout = InterviewTimelineLayout(processes: processes, domain: days(-45)...days(5), plotWidth: 500)
+        XCTAssertEqual(layout.dots.filter { $0.step == nil }.count, 1)
     }
 }

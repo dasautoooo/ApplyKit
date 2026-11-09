@@ -305,6 +305,33 @@ final class ApplicationInsightsTests: XCTestCase {
         }
     }
 
+    func testInterviewToOfferCountsOnlyFinishedLoopsPastRoundOne() throws {
+        // The fixture: an offer after two rounds, a rejection after one round, a ghosting
+        // before any round, one waiting, one never applied.
+        var stillInterviewing = application(appliedDaysAgo: 30)
+        stillInterviewing.recordInterviewStep(round(20))
+        var withdrewAfterRound = application(appliedDaysAgo: 30)
+        withdrewAfterRound.recordInterviewStep(round(20))
+        withdrewAfterRound.setStatus(rawValue: ApplicationStatus.withdrawn.rawValue, at: daysAgo(10))
+
+        let kpis = ApplicationInsights(applications: fixture() + [stillInterviewing, withdrewAfterRound], now: now).kpis
+        XCTAssertEqual(kpis.finishedAfterInterviewing, 3, "offer, rejection, withdrawal; the ghosting never reached a round")
+        XCTAssertEqual(kpis.offersAfterInterviewing, 1)
+        XCTAssertEqual(kpis.interviewingNow, 1)
+        XCTAssertEqual(try XCTUnwrap(kpis.interviewToOfferRate), 1.0 / 3.0, accuracy: 0.0001)
+    }
+
+    func testADeclinedOfferStillCountsAsConverting() throws {
+        var declined = application(appliedDaysAgo: 40)
+        declined.recordInterviewStep(round(30))
+        declined.setStatus(rawValue: ApplicationStatus.offer.rawValue, at: daysAgo(20))
+        declined.setStatus(rawValue: ApplicationStatus.withdrawn.rawValue, at: daysAgo(10))
+
+        let kpis = ApplicationInsights(applications: [declined], now: now).kpis
+        XCTAssertEqual(kpis.finishedAfterInterviewing, 1)
+        XCTAssertEqual(kpis.offersAfterInterviewing, 1)
+    }
+
     func testFunnelSegmentsListTheApplicationsThatEndedThere() throws {
         let insights = ApplicationInsights(applications: fixture(), now: now)
 
