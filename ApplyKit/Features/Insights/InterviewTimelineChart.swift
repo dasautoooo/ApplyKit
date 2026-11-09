@@ -302,19 +302,11 @@ struct InterviewTimelineLayout {
             var markers = process.steps.map(Marker.step)
             markers += process.endings.map { .ending(process, $0) }
             markers.sort { $0.date < $1.date }
-            var laneEnds: [Date] = []
-            var placed: [(marker: Marker, lane: Int)] = []
-            for marker in markers {
-                if let lane = laneEnds.firstIndex(where: { marker.date.timeIntervalSince($0) >= minGap }) {
-                    laneEnds[lane] = marker.date
-                    placed.append((marker, lane))
-                } else {
-                    laneEnds.append(marker.date)
-                    placed.append((marker, laneEnds.count - 1))
-                }
-            }
+            let lanes = InsightsLanes.assign(markers.map(\.date.timeIntervalSinceReferenceDate), minGap: minGap)
+            let placed = Array(zip(markers, lanes))
+            let laneCount = (lanes.max() ?? 0) + 1
             // Lanes alternate above and below the line, so the furthest is half the count away.
-            let reach = Double(laneEnds.count / 2) * Self.laneSpacing
+            let reach = Double(laneCount / 2) * Self.laneSpacing
             let height = max(Self.rowHeight, reach * 2 + Self.rowHeight - Self.laneSpacing)
             let center = top + height / 2
             rows.append(Row(process: process, center: center))
@@ -330,9 +322,7 @@ struct InterviewTimelineLayout {
 
     /// 0 on the line, then one lane above, one below, two above, …
     static func offset(ofLane lane: Int) -> Double {
-        guard lane > 0 else { return 0 }
-        let step = Double((lane + 1) / 2) * laneSpacing
-        return lane.isMultiple(of: 2) ? step : -step
+        InsightsLanes.offset(ofLane: lane, spacing: laneSpacing)
     }
 }
 

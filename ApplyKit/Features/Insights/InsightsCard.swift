@@ -198,3 +198,40 @@ extension InterviewInsights {
     /// Steps that haven't happened yet, wherever they're drawn.
     static var upcomingColor: Color { .gray }
 }
+
+/// Keeps marks along one row from hiding each other: marks closer than `minGap` along the
+/// row go into separate lanes, the first on the row's line and the rest alternating above
+/// and below it.
+enum InsightsLanes {
+    /// A lane for each position, in the order given. With `maxLanes` reached, a mark shares the
+    /// lane whose last mark is furthest back, where it overlaps least.
+    static func assign(_ positions: [Double], minGap: Double, maxLanes: Int = .max) -> [Int] {
+        // Left to right; ties keep their given order so the result is stable between redraws.
+        let order = positions.indices.sorted { (positions[$0], $0) < (positions[$1], $1) }
+        var laneEnds: [Double] = []
+        var lanes = Array(repeating: 0, count: positions.count)
+        for index in order {
+            let position = positions[index]
+            let lane: Int
+            if let free = laneEnds.firstIndex(where: { position - $0 >= minGap }) {
+                lane = free
+            } else if laneEnds.count < maxLanes {
+                laneEnds.append(position)
+                lane = laneEnds.count - 1
+            } else {
+                lane = laneEnds.indices.min { laneEnds[$0] < laneEnds[$1] } ?? 0
+            }
+            laneEnds[lane] = position
+            lanes[index] = lane
+        }
+        return lanes
+    }
+
+    /// 0 on the line, then one lane above, one below, two above, … in screen points, where
+    /// negative is up.
+    static func offset(ofLane lane: Int, spacing: Double) -> Double {
+        guard lane > 0 else { return 0 }
+        let step = Double((lane + 1) / 2) * spacing
+        return lane.isMultiple(of: 2) ? step : -step
+    }
+}

@@ -203,4 +203,22 @@ final class InterviewInsightsTests: XCTestCase {
         let layout = InterviewTimelineLayout(processes: processes, domain: days(-45)...days(5), plotWidth: 500)
         XCTAssertEqual(layout.dots.filter { $0.step == nil }.count, 1)
     }
+
+    // MARK: - Lanes
+
+    func testCloseMarksGetTheirOwnLanesAndSpreadOnesShareTheLine() {
+        // Given out of order: lanes still follow left to right.
+        let lanes = InsightsLanes.assign([8.31, 2.0, 8.3, 8.32, 5.0], minGap: 0.1)
+        XCTAssertEqual(lanes, [1, 0, 0, 2, 0])
+    }
+
+    func testAFullRowSharesTheLaneThatLeastOverlaps() {
+        let lanes = InsightsLanes.assign([1.0, 1.01, 1.02, 1.03], minGap: 0.1, maxLanes: 3)
+        XCTAssertEqual(Array(lanes.prefix(3)), [0, 1, 2])
+        XCTAssertEqual(lanes[3], 0, "the lane whose last mark is furthest back")
+    }
+
+    func testIdenticalPositionsKeepTheirOrder() {
+        XCTAssertEqual(InsightsLanes.assign([8.3, 8.3], minGap: 0.1), [0, 1])
+    }
 }
