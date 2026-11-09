@@ -305,6 +305,21 @@ final class ApplicationInsightsTests: XCTestCase {
         }
     }
 
+    func testFunnelSegmentsListTheApplicationsThatEndedThere() throws {
+        let insights = ApplicationInsights(applications: fixture(), now: now)
+
+        for (stage, _) in insights.reached {
+            let segments = insights.funnel.filter { $0.stage == stage }
+            let ids = segments.flatMap(\.members).map(\.applicationID)
+            XCTAssertEqual(ids.count, Set(ids).count, "each application sits in one segment of \(stage.label)")
+            XCTAssertEqual(Set(ids), Set((insights.stageMembers[stage] ?? []).map(\.applicationID)), stage.label)
+        }
+        // The fixture's rejection came after round 1, so that's the segment that lists it.
+        let rejected = try XCTUnwrap(insights.funnel.first { $0.outcome == .rejected })
+        XCTAssertEqual(rejected.stage, .round1)
+        XCTAssertEqual(rejected.members.count, 1)
+    }
+
     func testARejectionAfterRoundOneIsListedWhereItWent() throws {
         var rejected = application(appliedDaysAgo: 50)
         rejected.companyName = "Contoso"

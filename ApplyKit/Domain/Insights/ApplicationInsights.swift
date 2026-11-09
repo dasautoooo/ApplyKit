@@ -206,7 +206,9 @@ struct ApplicationInsights {
     struct FunnelSegment: Identifiable {
         let stage: FunnelStage
         let outcome: FunnelOutcome
-        let count: Int
+        /// The applications in this piece of the bar, by company then role.
+        let members: [ApplicationJourney]
+        var count: Int { members.count }
         var id: String { "\(stage.rawValue)-\(outcome.rawValue)" }
     }
 
@@ -317,23 +319,23 @@ struct ApplicationInsights {
 
         // Funnel: every reached stage but the last is "advanced"; the last carries the outcome.
         let byName = inFunnel.sorted(by: Self.byCompanyThenRole)
-        var counts: [FunnelStage: [FunnelOutcome: Int]] = [:]
+        var segmentMembers: [FunnelStage: [FunnelOutcome: [ApplicationJourney]]] = [:]
         var stageMembers: [FunnelStage: [ApplicationJourney]] = [:]
         for journey in byName {
             for stage in journey.reachedStages {
                 let outcome = stage == journey.furthestStage ? journey.outcome : .advanced
-                counts[stage, default: [:]][outcome, default: 0] += 1
+                segmentMembers[stage, default: [:]][outcome, default: []].append(journey)
                 stageMembers[stage, default: []].append(journey)
             }
         }
         self.stageMembers = stageMembers
         funnel = FunnelStage.allCases.flatMap { stage in
             FunnelOutcome.allCases.compactMap { outcome in
-                counts[stage]?[outcome].map { FunnelSegment(stage: stage, outcome: outcome, count: $0) }
+                segmentMembers[stage]?[outcome].map { FunnelSegment(stage: stage, outcome: outcome, members: $0) }
             }
         }
         reached = FunnelStage.allCases.compactMap { stage in
-            let total = counts[stage]?.values.reduce(0, +) ?? 0
+            let total = stageMembers[stage]?.count ?? 0
             return total > 0 ? (stage, total) : nil
         }
 
