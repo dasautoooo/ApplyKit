@@ -82,6 +82,8 @@ struct ApplicationJourney {
     let hasInferredHistory: Bool
     let fitScore: Double?
     let isArchived: Bool
+    let companyName: String
+    let jobTitle: String
 
     var furthestStage: FunnelStage? { reachedStages.last }
     var reachedOffer: Bool { reachedStages.last == .offer }
@@ -93,6 +95,8 @@ struct ApplicationJourney {
         applicationID = application.id
         fitScore = application.fitScore
         isArchived = application.isArchived
+        companyName = application.companyName
+        jobTitle = application.jobTitle
         hasInferredHistory = application.timeline.contains(where: \.isInferred)
 
         let current = ApplicationStatus.stored(application.statusRaw)
@@ -219,7 +223,9 @@ struct ApplicationInsights {
     struct Flow: Identifiable {
         let from: FunnelStage
         let to: FlowTarget
-        let count: Int
+        /// The applications that took this path, by company then role.
+        let members: [ApplicationJourney]
+        var count: Int { members.count }
         var id: String { "\(from.rawValue)->\(to)" }
     }
 
@@ -293,6 +299,8 @@ struct ApplicationInsights {
     /// Every stage but Offer is a prefix of the one before it; Offer can follow any of them.
     let reached: [(stage: FunnelStage, count: Int)]
     let flows: [Flow]
+    /// The applications that reached each stage, by company then role.
+    let stageMembers: [FunnelStage: [ApplicationJourney]]
     let snapshot: [SnapshotSlice]
     let activity: [ActivityPoint]
     let durations: [DurationSummary]
@@ -306,13 +314,17 @@ struct ApplicationInsights {
         let inFunnel = all.filter { !$0.reachedStages.isEmpty }
 
         // Funnel: every reached stage but the last is "advanced"; the last carries the outcome.
+        let byName = inFunnel.sorted(by: Self.byCompanyThenRole)
         var counts: [FunnelStage: [FunnelOutcome: Int]] = [:]
-        for journey in inFunnel {
+        var stageMembers: [FunnelStage: [ApplicationJourney]] = [:]
+        for journey in byName {
             for stage in journey.reachedStages {
                 let outcome = stage == journey.furthestStage ? journey.outcome : .advanced
                 counts[stage, default: [:]][outcome, default: 0] += 1
+                stageMembers[stage, default: []].append(journey)
             }
         }
+        self.stageMembers = stageMembers
         funnel = FunnelStage.allCases.flatMap { stage in
             FunnelOutcome.allCases.compactMap { outcome in
                 counts[stage]?[outcome].map { FunnelSegment(stage: stage, outcome: outcome, count: $0) }
@@ -326,22 +338,22 @@ struct ApplicationInsights {
         // Sankey flows run along the pipeline stages, which are always contiguous. Offer is the
         // final column, fed from whichever stage the offer followed, so its ribbons can skip
         // columns. It's terminal: however an offer ended, nothing flows out of it.
-        var flowCounts: [FlowKey: Int] = [:]
-        for journey in inFunnel {
+        var flowMembers: [FlowKey: [ApplicationJourney]] = [:]
+        for journey in byName {
             let pipeline = journey.reachedStages.filter { $0 != .offer }
             for (stage, next) in zip(pipeline, pipeline.dropFirst()) {
-                flowCounts[FlowKey(from: stage, to: .stage(next)), default: 0] += 1
+                flowMembers[FlowKey(from: stage, to: .stage(next)), default: []].append(journey)
             }
             if let last = pipeline.last {
                 let target: FlowTarget = journey.reachedOffer ? .stage(.offer) : .outcome(journey.outcome)
-                flowCounts[FlowKey(from: last, to: target), default: 0] += 1
+                flowMembers[FlowKey(from: last, to: target), default: []].append(journey)
             }
         }
         let targetOrder: [FlowTarget] = FunnelStage.allCases.map { .stage($0) }
             + ([.active] + FunnelOutcome.exits).map { .outcome($0) }
         flows = FunnelStage.allCases.flatMap { stage in
             targetOrder.compactMap { target in
-                flowCounts[FlowKey(from: stage, to: target)].map { Flow(from: stage, to: target, count: $0) }
+                flowMembers[FlowKey(from: stage, to: target)].map { Flow(from: stage, to: target, members: $0) }
             }
         }
 
@@ -409,6 +421,13 @@ struct ApplicationInsights {
         }
 
         inferredCount = inFunnel.filter(\.hasInferredHistory).count
+    }
+
+    private static func byCompanyThenRole(_ lhs: ApplicationJourney, _ rhs: ApplicationJourney) -> Bool {
+        // Case-insensitive so one company's roles stay together however its name was typed.
+        let company = lhs.companyName.localizedCaseInsensitiveCompare(rhs.companyName)
+        if company != .orderedSame { return company == .orderedAscending }
+        return lhs.jobTitle.localizedStandardCompare(rhs.jobTitle) == .orderedAscending
     }
 
     /// Whole-or-fractional days between two dates; nil when the order is backwards, which

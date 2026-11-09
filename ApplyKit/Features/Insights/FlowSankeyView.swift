@@ -11,8 +11,16 @@ import SwiftUI
 /// nodes (Still active, Rejected, ...).
 struct FlowSankeyView: View {
     let insights: ApplicationInsights
-    @State private var hoveredFlowID: String?
+    /// What the pointer is over, updated on every move: drives the highlight and the caption.
+    @State private var hovered: SankeyHoverTarget?
+    /// The popover listing the hovered target's applications, shown once the pointer rests.
+    @State private var popover: FlowPopover?
+    @State private var restTask: Task<Void, Never>?
     @Environment(\.isInsightsExport) private var isExport
+
+    /// How long the pointer has to rest before the popover opens, like a help tag: sweeping
+    /// across the graph shouldn't open and close a popover per ribbon.
+    private static let restDelay = Duration.milliseconds(150)
 
     var body: some View {
         if insights.reached.isEmpty {
@@ -26,45 +34,69 @@ struct FlowSankeyView: View {
                     }
                     .onContinuousHover { phase in
                         switch phase {
-                        case .active(let point):
-                            hoveredFlowID = layout.flowID(at: point)
-                        case .ended:
-                            hoveredFlowID = nil
+                        case .active(let point): pointerMoved(to: point, in: layout)
+                        case .ended: pointerLeft()
                         }
+                    }
+                    .popover(item: $popover,
+                             attachmentAnchor: .rect(.rect(popover?.anchor ?? .zero)),
+                             arrowEdge: .bottom) { popover in
+                        FlowPopoverContent(insights: insights, target: popover.target)
                     }
                 }
                 .frame(height: SankeyLayout.height(for: insights))
 
                 if !isExport {
-                    Text(readout)
+                    Text(hovered.map { FlowPopoverContent(insights: insights, target: $0).summary }
+                         ?? "Hover a ribbon or stage to see its applications.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
+            .onDisappear { restTask?.cancel() }
         }
     }
 
-    private var readout: String {
-        guard let flow = insights.flows.first(where: { $0.id == hoveredFlowID }) else {
-            return "Hover a ribbon for its count."
+    // MARK: Hover
+
+    /// Moving onto something else closes the popover; resting on a target opens one pointing
+    /// at where the pointer stopped. The popover opens below that point and never under the
+    /// pointer, so it can't cover what it describes and flicker.
+    private func pointerMoved(to point: CGPoint, in layout: SankeyLayout) {
+        guard !isExport else { return }
+        let target = layout.target(at: point)
+        if target != hovered {
+            hovered = target
+            popover = nil
         }
-        let target = switch flow.to {
-        case .stage(let stage): stage.label
-        case .outcome(let outcome): outcome.label
+        restTask?.cancel()
+        guard let target, popover == nil else { return }
+        restTask = Task {
+            try? await Task.sleep(for: Self.restDelay)
+            guard !Task.isCancelled, hovered == target else { return }
+            popover = FlowPopover(target: target, anchor: CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8))
         }
-        let share = count(at: flow.from).map { Double(flow.count) / Double($0) }
-        let shareText = share.map { " (\($0.formatted(.percent.precision(.fractionLength(0)))) of \(flow.from.label))" } ?? ""
-        return "\(flow.from.label) → \(target): \(flow.count)\(shareText)"
     }
 
-    private func count(at stage: FunnelStage) -> Int? {
-        insights.reached.first { $0.stage == stage }?.count
+    private func pointerLeft() {
+        restTask?.cancel()
+        hovered = nil
+        popover = nil
+    }
+
+    // MARK: Drawing
+
+    private func isHighlighted(_ flow: ApplicationInsights.Flow) -> Bool {
+        switch hovered {
+        case .flow(let id): flow.id == id
+        case .stage(let stage): flow.from == stage || flow.to == .stage(stage)
+        case nil: false
+        }
     }
 
     private func draw(_ layout: SankeyLayout, in context: inout GraphicsContext) {
         for ribbon in layout.ribbons {
-            let isHovered = ribbon.flow.id == hoveredFlowID
-            let base = hoveredFlowID == nil ? 0.3 : (isHovered ? 0.55 : 0.15)
+            let base = hovered == nil ? 0.3 : (isHighlighted(ribbon.flow) ? 0.55 : 0.15)
             context.fill(ribbon.path, with: .color(ribbon.color.opacity(base)))
         }
 
@@ -74,6 +106,155 @@ struct FlowSankeyView: View {
                 + Text(" \(node.count)").font(.caption.weight(.semibold)).foregroundStyle(.primary)
             context.draw(text, at: node.labelPoint, anchor: node.labelAnchor)
         }
+    }
+}
+
+/// What the pointer is over in the Sankey: a ribbon (or the outcome node it ends in), or a
+/// stage's column.
+enum SankeyHoverTarget: Hashable {
+    case flow(String)
+    case stage(FunnelStage)
+}
+
+private struct FlowPopover: Identifiable {
+    let id = UUID()
+    let target: SankeyHoverTarget
+    /// Where the pointer came to rest, in the graph's coordinates.
+    let anchor: CGRect
+}
+
+/// The applications behind one ribbon or stage, laid out like a standard macOS popover: a
+/// title and summary over a plain two-line list.
+private struct FlowPopoverContent: View {
+    let insights: ApplicationInsights
+    let target: SankeyHoverTarget
+
+    /// The Applied end of the funnel can hold most of the search, so its lists are cut short.
+    private static let cappedRowCount = 8
+
+    var body: some View {
+        let members = members
+        let shown = isCapped ? Array(members.prefix(Self.cappedRowCount)) : members
+        let hidden = members.count - shown.count
+
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
+
+            Divider()
+                .padding(.horizontal, 14)
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(shown, id: \.applicationID) { member in
+                    row(member)
+                }
+                if hidden > 0 {
+                    Text("\(hidden) more")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+            .padding(.bottom, 12)
+        }
+        .frame(width: 280, alignment: .leading)
+    }
+
+    private func row(_ member: ApplicationJourney) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(member.companyName.trimmed.isEmpty ? "Untitled" : member.companyName)
+                Text(member.jobTitle.trimmed.isEmpty ? "No role" : member.jobTitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            Spacer(minLength: 0)
+            if member.isArchived {
+                Text("Archived")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: Text
+
+    private var flow: ApplicationInsights.Flow? {
+        guard case .flow(let id) = target else { return nil }
+        return insights.flows.first { $0.id == id }
+    }
+
+    private var title: String {
+        switch target {
+        case .stage(let stage):
+            return stage.label
+        case .flow:
+            guard let flow else { return "" }
+            let destination = switch flow.to {
+            case .stage(let stage): stage.label
+            case .outcome(let outcome): outcome.label
+            }
+            return "\(flow.from.label) → \(destination)"
+        }
+    }
+
+    /// The count and its share: of the source stage for a ribbon, of everything applied to
+    /// for a stage (the same percentage the Funnel shows).
+    private var detail: String {
+        switch target {
+        case .stage(let stage):
+            let reached = count(at: stage) ?? 0
+            let noun = reached == 1 ? "application" : "applications"
+            guard stage != .applied, let share = share(reached, of: .applied) else { return "\(reached) \(noun)" }
+            return "\(reached) \(noun) · \(share) of applied"
+        case .flow:
+            guard let flow else { return "" }
+            let noun = flow.count == 1 ? "application" : "applications"
+            guard let share = share(flow.count, of: flow.from) else { return "\(flow.count) \(noun)" }
+            return "\(flow.count) \(noun) · \(share) of \(flow.from.label)"
+        }
+    }
+
+    /// One line for the caption under the graph.
+    var summary: String { "\(title): \(detail)" }
+
+    private var members: [ApplicationJourney] {
+        switch target {
+        case .flow: flow?.members ?? []
+        case .stage(let stage): insights.stageMembers[stage] ?? []
+        }
+    }
+
+    /// Only the Applied stage and the ways out of it are cut short; from the screen on, every
+    /// application is listed.
+    private var isCapped: Bool {
+        switch target {
+        case .stage(let stage):
+            return stage == .applied
+        case .flow:
+            guard let flow, flow.from == .applied else { return false }
+            if case .outcome = flow.to { return true }
+            return false
+        }
+    }
+
+    private func count(at stage: FunnelStage) -> Int? {
+        insights.reached.first { $0.stage == stage }?.count
+    }
+
+    private func share(_ part: Int, of stage: FunnelStage) -> String? {
+        guard let total = count(at: stage), total > 0 else { return nil }
+        return (Double(part) / Double(total)).formatted(.percent.precision(.fractionLength(0)))
     }
 }
 
@@ -88,12 +269,16 @@ struct SankeyLayout {
         let labelAnchor: UnitPoint
         /// Outcome nodes stand for one flow, so hovering them — or their label — shows it.
         var flowID: String?
+        /// Set on stage columns (Offer included), which show everyone who reached them.
+        var stage: FunnelStage?
 
-        /// The node plus a margin, and for an outcome node the label beside it.
+        /// The node plus a margin, and its label: beside an outcome node, above a stage column.
         var hitRect: CGRect {
             let padded = rect.insetBy(dx: -4, dy: -5)
-            guard labelAnchor == .leading else { return padded }
-            return padded.union(CGRect(x: labelPoint.x, y: labelPoint.y - 9, width: 110, height: 18))
+            let label = labelAnchor == .leading
+                ? CGRect(x: labelPoint.x, y: labelPoint.y - 9, width: 110, height: 18)
+                : CGRect(x: labelPoint.x, y: labelPoint.y - 16, width: 80, height: 16)
+            return padded.union(label)
         }
     }
 
@@ -110,13 +295,20 @@ struct SankeyLayout {
     /// Half-widths of the hover bands around each ribbon's centre line.
     private static let hitTolerances: [CGFloat] = [3, 6, 9]
 
-    /// The flow under the pointer: a ribbon it's inside, else an outcome node or its label,
-    /// else the ribbon whose centre line it's nearest, within a few points.
-    func flowID(at point: CGPoint) -> String? {
-        if let ribbon = ribbons.last(where: { $0.path.contains(point) }) { return ribbon.flow.id }
-        if let node = nodes.last(where: { $0.flowID != nil && $0.hitRect.contains(point) }) { return node.flowID }
+    /// What's under the pointer: a ribbon it's inside, else an outcome node or its label, else
+    /// a stage column or its label, else the ribbon whose centre line it's nearest, within a
+    /// few points. Columns come before the near-miss bands so a thin ribbon leaving a column
+    /// doesn't steal the hover from it.
+    func target(at point: CGPoint) -> SankeyHoverTarget? {
+        if let ribbon = ribbons.last(where: { $0.path.contains(point) }) { return .flow(ribbon.flow.id) }
+        if let id = nodes.last(where: { $0.flowID != nil && $0.hitRect.contains(point) })?.flowID {
+            return .flow(id)
+        }
+        if let stage = nodes.last(where: { $0.stage != nil && $0.hitRect.contains(point) })?.stage {
+            return .stage(stage)
+        }
         for band in Self.hitTolerances.indices {
-            if let ribbon = ribbons.last(where: { $0.hitBands[band].contains(point) }) { return ribbon.flow.id }
+            if let ribbon = ribbons.last(where: { $0.hitBands[band].contains(point) }) { return .flow(ribbon.flow.id) }
         }
         return nil
     }
@@ -196,7 +388,8 @@ struct SankeyLayout {
                 label: FunnelStage.offer.label,
                 count: offerCount,
                 labelPoint: CGPoint(x: rect.minX, y: Self.labelTop - 4),
-                labelAnchor: .bottomLeading
+                labelAnchor: .bottomLeading,
+                stage: .offer
             ))
         }
 
@@ -209,7 +402,8 @@ struct SankeyLayout {
                 label: entry.stage.label,
                 count: entry.count,
                 labelPoint: CGPoint(x: rect.minX, y: Self.labelTop - 4),
-                labelAnchor: .bottomLeading
+                labelAnchor: .bottomLeading,
+                stage: entry.stage
             ))
 
             // Stacked inside the node: advancing flow on top, then offers, then each way out.

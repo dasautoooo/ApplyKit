@@ -287,6 +287,54 @@ final class ApplicationInsightsTests: XCTestCase {
         XCTAssertEqual(ApplicationInsights.percentile([1, 2, 3, 4], 0.5), 2.5)
         XCTAssertEqual(ApplicationInsights.percentile([10, 0, 20], 0.25), 5)
     }
+
+    // MARK: - Members
+
+    func testFlowAndStageMembersMatchTheirCounts() {
+        let insights = ApplicationInsights(applications: fixture(), now: now)
+
+        for flow in insights.flows {
+            XCTAssertEqual(flow.members.count, flow.count)
+        }
+        for (stage, reached) in insights.reached {
+            let members = insights.stageMembers[stage] ?? []
+            XCTAssertEqual(members.count, reached, stage.label)
+            guard stage != .offer else { continue }
+            let outgoing = insights.flows.filter { $0.from == stage }.flatMap(\.members).map(\.applicationID)
+            XCTAssertEqual(Set(outgoing), Set(members.map(\.applicationID)), stage.label)
+        }
+    }
+
+    func testARejectionAfterRoundOneIsListedWhereItWent() throws {
+        var rejected = application(appliedDaysAgo: 50)
+        rejected.companyName = "Contoso"
+        rejected.jobTitle = "iOS Engineer"
+        rejected.recordInterviewStep(screen(40))
+        rejected.recordInterviewStep(round(30))
+        rejected.setStatus(rawValue: ApplicationStatus.rejected.rawValue, at: daysAgo(25))
+        let insights = ApplicationInsights(applications: [rejected], now: now)
+
+        let flow = try XCTUnwrap(insights.flows.first { $0.from == .round1 && $0.to == .outcome(.rejected) })
+        XCTAssertEqual(flow.members.map(\.companyName), ["Contoso"])
+        XCTAssertEqual(flow.members.map(\.jobTitle), ["iOS Engineer"])
+        for stage in [FunnelStage.applied, .screen, .round1] {
+            XCTAssertEqual(insights.stageMembers[stage]?.map(\.applicationID), [rejected.id], stage.label)
+        }
+        XCTAssertNil(insights.stageMembers[.round2])
+    }
+
+    func testMembersAreListedByCompanyThenRole() {
+        let names = [("Zeta", "iOS"), ("alpha", "Platform"), ("Alpha", "Mobile"), ("Beta", "iOS")]
+        let apps = names.map { company, role -> JobApplication in
+            var app = application(appliedDaysAgo: 10)
+            app.companyName = company
+            app.jobTitle = role
+            return app
+        }
+        let insights = ApplicationInsights(applications: apps, now: now)
+        let listed = (insights.stageMembers[.applied] ?? []).map { "\($0.companyName) \($0.jobTitle)" }
+        XCTAssertEqual(listed, ["Alpha Mobile", "alpha Platform", "Beta iOS", "Zeta iOS"])
+    }
 }
 
 @MainActor
@@ -310,13 +358,21 @@ final class SankeyHoverTests: XCTestCase {
         let ribbon = try XCTUnwrap(layout.ribbons.first { $0.flow.id == thin.id })
         // The S-curve's midpoint is the centre of its bounds; a few points off it still counts.
         let centre = CGPoint(x: ribbon.path.boundingRect.midX, y: ribbon.path.boundingRect.midY)
-        XCTAssertEqual(layout.flowID(at: CGPoint(x: centre.x, y: centre.y + 5)), thin.id)
-        XCTAssertNil(layout.flowID(at: CGPoint(x: centre.x + 400, y: centre.y + 200)))
+        XCTAssertEqual(layout.target(at: CGPoint(x: centre.x, y: centre.y + 5)), .flow(thin.id))
+        XCTAssertNil(layout.target(at: CGPoint(x: centre.x + 400, y: centre.y + 200)))
     }
 
     func testHoveringAnOutcomeLabelShowsItsFlow() throws {
         let (layout, thin) = layout()
         let node = try XCTUnwrap(layout.nodes.first { $0.flowID == thin.id })
-        XCTAssertEqual(layout.flowID(at: CGPoint(x: node.labelPoint.x + 30, y: node.labelPoint.y)), thin.id)
+        XCTAssertEqual(layout.target(at: CGPoint(x: node.labelPoint.x + 30, y: node.labelPoint.y)), .flow(thin.id))
+    }
+
+    func testHoveringAStageColumnOrItsLabelShowsTheStage() throws {
+        let (layout, _) = layout()
+        let applied = try XCTUnwrap(layout.nodes.first { $0.stage == .applied })
+        XCTAssertEqual(layout.target(at: CGPoint(x: applied.rect.midX, y: applied.rect.midY)), .stage(.applied))
+        XCTAssertEqual(layout.target(at: CGPoint(x: applied.labelPoint.x + 10, y: applied.labelPoint.y - 6)),
+                       .stage(.applied))
     }
 }
